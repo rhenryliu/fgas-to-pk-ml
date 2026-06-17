@@ -8,8 +8,8 @@
 # single explicit `path:` to a saved .npz -- not both.
 
 # --- Option A: resolve from store fields ---
-# project_root: /pscratch/sd/r/rhliu/projects/fgas-to-pk-ml
-project_root: ./
+# project_root: /pscratch/sd/r/rhliu/projects/fgas-to-pk-ml   # NERSC Perlmutter
+project_root: /Users/hliu/projects/repos/fgas-to-pk-ml/
 suite: CAMELS-IllustrisTNG-L50n512-SB35
 snapshot: 74
 redshift: 0.47
@@ -24,7 +24,7 @@ tag: latest          # or an explicit tag like 20260617 / v1 (preferred for repr
 sim_ids: null
 
 # --- Inputs / features ---
-number_density_indices: null   # null = all five number densities
+number_density_indices: [2]   # null = all five number densities
 radial_range_mpch: null        # null = full radial range; e.g. [0.1, 2.0] to crop (Mpc/h)
 include_nd_feature: true       # number density -> X_cond
 include_mean_halo_mass: false  # stack's mean M_500c [M_sun/h] -> X_cond
