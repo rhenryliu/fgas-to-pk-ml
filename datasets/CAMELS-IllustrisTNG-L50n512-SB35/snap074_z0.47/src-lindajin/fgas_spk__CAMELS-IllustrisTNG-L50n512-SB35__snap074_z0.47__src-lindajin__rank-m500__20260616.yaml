@@ -1,0 +1,75 @@
+schema_version: '1.0'
+created_utc: '2026-06-16T06:54:49+00:00'
+suite: CAMELS-IllustrisTNG-L50n512-SB35
+snapshot: 74
+redshift: 0.47
+source: lindajin
+rank_key: halo_mass
+tag: '20260616'
+n_sims: 1024
+n_number_densities: 5
+n_radii: 17
+n_k: 118
+number_densities:
+- 0.0001
+- 0.00028
+- 0.0005
+- 0.001
+- 0.0024
+units:
+  radii_mpch: comoving Mpc/h
+  k: h/Mpc
+  suppression: P_total(k)/P_DM(k), dimensionless
+  fgas: Delta Sigma_ionized / Delta Sigma_total / f_b, dimensionless
+  mean_halo_mass: M_500c [M_sun/h]
+cosmology_note: Per-simulation cosmology varies across the suite (Sobol set); f_b
+  and h are stored per simulation in the source profiles, not here.
+arrays:
+  radii_mpch:
+    shape:
+    - 17
+    dtype: float64
+  number_densities:
+    shape:
+    - 5
+    dtype: float64
+  fgas:
+    shape:
+    - 1024
+    - 5
+    - 17
+    dtype: float64
+  fgas_std:
+    shape:
+    - 1024
+    - 5
+    - 17
+    dtype: float64
+  k:
+    shape:
+    - 118
+    dtype: float64
+  suppression:
+    shape:
+    - 1024
+    - 118
+    dtype: float64
+  sim_ids:
+    shape:
+    - 1024
+    dtype: int64
+  mean_halo_mass:
+    shape:
+    - 1024
+    - 5
+    dtype: float32
+  camels_params:
+    shape:
+    - 1024
+    - 35
+    dtype: float64
+provenance:
+  profiles_repo: github.com/Klinjin/SimulationStacker (fork)
+  producer: CAMELS_training_data_second_generation.py
+  note: Profiles from lindajin scratch; re-ranked by M_500c on load.
+notes: Bins re-sorted by halo mass to correct the unsorted-selection bug.
