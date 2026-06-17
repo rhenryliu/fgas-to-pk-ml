@@ -15,7 +15,9 @@ training data.
 Current contents: `fgas_spk_dataset.py` (the library) and a copy of the
 collaborator-authored reference notebook `test_CAMELS_sixth_gen.ipynb`. The
 notebook is provenance, not the source of truth — the library is the corrected,
-maintained version of its loading logic.
+maintained version of its loading logic. `fgas_spk_dataset_v0.py` is a **frozen,
+pre-refactor backup** of the loader, kept only because callers may still source
+it; do not extend or fix it — all changes go to `fgas_spk_dataset.py`.
 
 ## How to work here
 

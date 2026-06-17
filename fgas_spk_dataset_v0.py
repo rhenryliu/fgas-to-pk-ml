@@ -1,4 +1,13 @@
-"""Assemble an f_gas(R) to SP(k) training set from CAMELS stacking products.
+"""[FROZEN BACKUP] Pre-refactor copy of the f_gas(R) -> SP(k) loader.
+
+This module is a frozen, pre-refactor backup of the data-loading code, retained
+only because callers may still source it. Do not extend or fix it here; the
+canonical, maintained module is ``fgas_spk_dataset.py``. Note in particular that
+this version's ``__main__`` uses the old suppression naming
+(``Ptot_Pdm_ratio_k_le15.npz``) and lacks the snapshot/suppression cross-check
+and the ``snapshot`` field carried by the canonical module.
+
+Assemble an f_gas(R) to SP(k) training set from CAMELS stacking products.
 
 This module isolates the data-loading logic that currently lives inside
 ``test_CAMELS_sixth_gen.ipynb`` so it can be reused for model training

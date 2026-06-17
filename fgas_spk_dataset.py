@@ -33,6 +33,7 @@ Notes:
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -92,6 +93,9 @@ class FgasSpkDataset:
             simulation, shape (n_sims, n_params), aligned with ``sim_ids``. None
             unless a ``params_path`` was supplied. Intended as a held-out
             diagnostic (e.g. residual-vs-parameter checks), not a core feature.
+        snapshot (int, optional): Snapshot the dataset was built for (e.g. 74 ->
+            z=0.47, 82 -> z=0.21). Populated by the loaders so the redshift is
+            carried with the data; None for datasets assembled without it.
     """
 
     radii_mpch: np.ndarray
@@ -104,6 +108,7 @@ class FgasSpkDataset:
     mean_halo_mass: np.ndarray
     rank_key: str = "halo_mass"
     camels_params: np.ndarray | None = None
+    snapshot: int | None = None
 
     def to_training_arrays(
         self, k_target: float | None = None
@@ -251,6 +256,32 @@ def _load_params(params_path: str | Path | None, sim_ids: Sequence[int]) -> np.n
     return params[np.asarray(sim_ids)]
 
 
+def _check_suppression_snapshot(suppression_path: Path, snapshot: int) -> None:
+    """Guard against pairing profiles with a mismatched-snapshot suppression file.
+
+    The suppression filename encodes its snapshot (e.g.
+    ``Ptot_Pdm_ratio_snap74.npz``). If that token disagrees with the ``snapshot``
+    argument, the loaders would silently pair one snapshot's profiles with
+    another's suppressions -- a wrong-redshift bug the row-count shape guard
+    cannot catch. Filenames without a ``snap<NN>`` token (e.g. older naming
+    conventions) are left unchecked rather than rejected.
+
+    Args:
+        suppression_path (Path): Path to the suppression ``.npz``.
+        snapshot (int): Snapshot the profiles are being loaded for.
+
+    Raises:
+        ValueError: If the filename's snapshot token contradicts ``snapshot``.
+    """
+    match = re.search(r"snap(\d+)", suppression_path.name)
+    if match and int(match.group(1)) != snapshot:
+        raise ValueError(
+            f"suppression_path '{suppression_path.name}' is snap{match.group(1)} "
+            f"but snapshot={snapshot} was passed. These must match -- a mismatch "
+            "would silently pair profiles and suppressions from different redshifts."
+        )
+
+
 def load_fgas_spk_dataset(
     base_path_template: str,
     suppression_path: str | Path,
@@ -297,6 +328,7 @@ def load_fgas_spk_dataset(
             of requested simulations.
     """
     suppression_path = Path(suppression_path)
+    _check_suppression_snapshot(suppression_path, snapshot)
     sup_file = np.load(suppression_path)
     k = np.asarray(sup_file["k"])
     suppression_all = np.asarray(sup_file["Ptot_Pdm_ratio"])  # (n_sims, n_k)
@@ -362,6 +394,7 @@ def load_fgas_spk_dataset(
         mean_halo_mass=np.stack(mean_mass_rows),  # (n_sims, n_nd)
         rank_key=rank_key,
         camels_params=_load_params(params_path, kept_ids),
+        snapshot=snapshot,
     )
 
 
@@ -414,7 +447,9 @@ def load_fgas_spk_from_compiled(
         FileNotFoundError: If a compiled file for any number density is missing.
     """
     data_dir = Path(data_dir)
-    sup_file = np.load(Path(suppression_path))
+    suppression_path = Path(suppression_path)
+    _check_suppression_snapshot(suppression_path, snapshot)
+    sup_file = np.load(suppression_path)
     k = np.asarray(sup_file["k"])
     suppression = np.asarray(sup_file["Ptot_Pdm_ratio"])  # (n_sims, n_k)
 
@@ -444,6 +479,11 @@ def load_fgas_spk_from_compiled(
     fgas = np.stack(fgas_per_nd, axis=1)
     fgas_std = np.stack(fgas_std_per_nd, axis=1)
     n_sims = fgas.shape[0]
+    if n_sims > suppression.shape[0]:
+        raise ValueError(
+            f"Compiled fgas files contain {n_sims} sims but the suppression file "
+            f"has only {suppression.shape[0]} rows; cannot pair them."
+        )
     sim_ids = list(range(n_sims))
 
     return FgasSpkDataset(
@@ -457,6 +497,7 @@ def load_fgas_spk_from_compiled(
         mean_halo_mass=np.full((n_sims, len(number_densities)), np.nan),
         rank_key="frozen_at_production",
         camels_params=_load_params(params_path, sim_ids),
+        snapshot=snapshot,
     )
 
 
@@ -547,7 +588,14 @@ def save_dataset(
 
     Raises:
         FileExistsError: If the target exists and ``overwrite`` is False.
+        ValueError: If ``snapshot`` contradicts a non-None ``dataset.snapshot``.
     """
+    if dataset.snapshot is not None and dataset.snapshot != snapshot:
+        raise ValueError(
+            f"save_dataset(snapshot={snapshot}) contradicts dataset.snapshot="
+            f"{dataset.snapshot}. Pass the snapshot the dataset was built for."
+        )
+
     rank = rank or _clean_rank(dataset.rank_key)
     tag = tag or datetime.now(timezone.utc).strftime("%Y%m%d")
 
@@ -640,6 +688,7 @@ def load_dataset(npz_path: str | Path) -> FgasSpkDataset:
         mean_halo_mass=data["mean_halo_mass"],
         rank_key=meta.get("rank_key", "unknown"),
         camels_params=data["camels_params"] if "camels_params" in data else None,
+        snapshot=meta.get("snapshot"),
     )
 
 
@@ -685,7 +734,7 @@ def _write_manifest(yaml_path: Path, meta: dict) -> None:
 if __name__ == "__main__":
     DATA_DIR = "/pscratch/sd/l/lindajin/DH_profile_kSZ_WL/data/"
     BASE = "/pscratch/sd/l/lindajin/CAMELS/IllustrisTNG/L50n512_SB35/SB35_{}/data/"
-    SNAPSHOT, REDSHIFT = 74, 0.47        # snap82 -> z=0.21
+    SNAPSHOT, REDSHIFT = 74, 0.47  # change to (82, 0.21) for the snap82 dataset
 
     # Correct (slower) path: rebuilds bins from raw per-halo data, fixing the sort.
     dataset = load_fgas_spk_dataset(
