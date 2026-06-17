@@ -1,12 +1,14 @@
-"""Pytest configuration for the single-module layout.
+"""Pytest configuration: put the ``src/`` module directory on ``sys.path``.
 
-Tests import the top-level ``fgas_spk_dataset`` module directly (per CLAUDE.md,
-this repo is single-module for now). Placing this ``conftest.py`` at the repo
-root puts the root on ``sys.path`` so that import resolves regardless of
-pytest's import mode.
+The library modules live in ``src/`` (``fgas_spk_schema``, ``fgas_spk_dataset``,
+``fgas_spk_loader``) as loose top-level modules -- not an installed package.
+Prepending ``src/`` here lets the tests import them by name regardless of
+pytest's import mode, with no editable install required. Running the loader CLI
+directly (``python src/fgas_spk_loader.py``) works without this shim, because
+Python already puts the script's own directory on ``sys.path``.
 """
 
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))

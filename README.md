@@ -12,13 +12,30 @@ products written by `SimulationStacker` and turns them into model-ready arrays.
 
 ## Contents
 
+The library modules live under `src/` as loose top-level modules (not an
+installed package).
+
 | File | Purpose |
 | --- | --- |
-| `fgas_spk_dataset.py` | Library: load profiles, fix the halo-ordering bug, assemble `(profile, nd) → SP(k)` arrays, and save/load datasets. |
+| `src/fgas_spk_schema.py` | **The on-disk data contract** — single source of truth: the `FgasSpkDataset` container, the filename/directory convention, `save_dataset`/`load_dataset`/`resolve_dataset_path`, and `SCHEMA_VERSION`. |
+| `src/fgas_spk_dataset.py` | Builder: load profiles, fix the halo-ordering bug, assemble `(profile, nd) → SP(k)` arrays. Imports the contract from `fgas_spk_schema`. |
+| `src/fgas_spk_loader.py` | Configurable training-data loader: read a saved dataset and serve model-ready numpy arrays per a `DataConfig`. Importable by training scripts and runnable as a CLI dry-run. numpy + pyyaml only (no torch). |
+| `src/fgas_spk_dataset_v0.py` | Frozen pre-refactor backup of the loader. Do not extend; kept only because callers may still source it. |
 | `test_CAMELS_sixth_gen.ipynb` | Reference notebook (collaborator-authored) the loader was distilled from. Kept for provenance; not the source of truth. |
 
 Configs, figures, and documentation live **here**, in this git-tracked repo.
 Large data and model checkpoints live separately on scratch (see *Data store*).
+
+### Importing
+
+The modules are imported by their flat names (`import fgas_spk_dataset`,
+`import fgas_spk_schema`, `import fgas_spk_loader`), so `src/` must be on
+`sys.path`:
+
+- **Tests** get it automatically via the root `conftest.py`.
+- **Scripts** can either run a module directly — `python src/fgas_spk_loader.py
+  --config config.yaml` puts `src/` on the path for free — or set
+  `PYTHONPATH=src` (e.g. `PYTHONPATH=src python my_train.py`).
 
 ## Requirements
 
@@ -91,11 +108,50 @@ Method: `to_training_arrays(k_target=None) -> (X, nd, y)`.
 | `save_dataset(dataset, project_root, suite, snapshot, redshift, source, ...)` | Write a `.npz` (metadata embedded under `__meta__`) plus a human-readable `.yaml` sidecar. Refuses to overwrite by default. |
 | `load_dataset(npz_path)` | Reconstruct a `FgasSpkDataset` from a saved `.npz`. |
 | `dataset_dir(project_root, suite, snapshot, redshift, source)` | Canonical directory for a provenance bucket. |
+| `resolve_dataset_path(project_root, suite, snapshot, redshift, source, rank, tag)` | Build a saved `.npz` path from its fields; `tag="latest"` auto-selects the newest (max date or max `vN`; mixed tags raise). Prefer explicit tags for reproducibility. |
 | `ensure_store_dirs(project_root, make_models=True)` | Create `datasets/` and `models/` in the scratch store. |
 
-Both loaders take a required `snapshot` argument (e.g. 74 → z=0.47, 82 → z=0.21),
+`save_dataset`, `load_dataset`, `dataset_dir`, `resolve_dataset_path`,
+`ensure_store_dirs`, and `FgasSpkDataset` are defined in `fgas_spk_schema` and
+re-exported from `fgas_spk_dataset` for convenience.
+
+Both builders take a required `snapshot` argument (e.g. 74 → z=0.47, 82 → z=0.21),
 which threads into the on-disk filenames. Pass the matching
 `Ptot_Pdm_ratio_snap{NN}.npz` as `suppression_path`.
+
+### Training-data loader (`fgas_spk_loader`)
+
+`fgas_spk_loader` reads a saved dataset (via `fgas_spk_schema`) and serves
+model-ready numpy arrays per a `DataConfig`. It does **no** preprocessing,
+normalisation, or splitting — those belong to the training script — and never
+imports a deep-learning framework.
+
+```python
+import fgas_spk_loader as L
+
+cfg = L.DataConfig(
+    project_root=PROJECT, suite="CAMELS-IllustrisTNG-L50n512-SB35",
+    snapshot=74, redshift=0.47, source="lindajin", rank="m500", tag="latest",
+    number_density_indices=[0, 2, 4],   # subset of the five nds (None = all)
+    radial_range_mpch=(0.3, 2.5),       # crop profile radii (None = all)
+    include_nd_feature=True,            # append the number density as a feature
+    target_mode="curve",               # or "single_k" (+k_target) / "k_range" (+k_range)
+)
+td = L.load_training_data(cfg)
+# td.X (n_examples, n_features), td.y, td.nd, td.sim_index, td.k, td.radii_mpch,
+# td.source_path, td.meta, td.config
+```
+
+Each row is one `(simulation, number-density)` pair. `td.sim_index` gives the
+originating simulation id per row so a downstream script can **split by
+simulation** (splitting by row would leak a simulation's shared `SP(k)` target
+across folds). Dry-run summary from the CLI:
+
+```
+python src/fgas_spk_loader.py --config config.yaml
+```
+
+A full example `DataConfig` YAML is in the `fgas_spk_loader` module docstring.
 
 ## Data store
 
