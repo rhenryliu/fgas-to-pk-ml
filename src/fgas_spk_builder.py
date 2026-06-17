@@ -196,7 +196,7 @@ def _check_suppression_snapshot(suppression_path: Path, snapshot: int) -> None:
         )
 
 
-def load_fgas_spk_dataset(
+def build_fgas_spk_dataset(
     base_path_template: str,
     suppression_path: str | Path,
     snapshot: int,
@@ -312,7 +312,7 @@ def load_fgas_spk_dataset(
     )
 
 
-def load_fgas_spk_from_compiled(
+def build_fgas_spk_from_compiled(
     data_dir: str | Path,
     suppression_path: str | Path,
     snapshot: int,
@@ -335,7 +335,7 @@ def load_fgas_spk_from_compiled(
         number-density bins are top-N by FoF mass, not by the selection proxy,
         and that cannot be corrected here. ``mean_halo_mass`` is unavailable
         (the compiled files do not store per-halo masses) and is returned as
-        NaN. Use :func:`load_fgas_spk_dataset` when correctness of the binning
+        NaN. Use :func:`build_fgas_spk_dataset` when correctness of the binning
         matters; use this for quick iteration when it does not.
 
     Args:
@@ -421,7 +421,7 @@ if __name__ == "__main__":
     SNAPSHOT, REDSHIFT = 74, 0.47  # change to (82, 0.21) for the snap82 dataset
 
     # Correct (slower) path: rebuilds bins from raw per-halo data, fixing the sort.
-    dataset = load_fgas_spk_dataset(
+    dataset = build_fgas_spk_dataset(
         base_path_template=BASE,
         suppression_path=Path(DATA_DIR) / f"Ptot_Pdm_ratio_snap{SNAPSHOT}.npz",
         snapshot=SNAPSHOT,
@@ -461,7 +461,7 @@ if __name__ == "__main__":
     # reloaded = load_dataset(out)
 
     # Fast path: load the pre-compiled ratio files as-is (no re-ranking).
-    # fast = load_fgas_spk_from_compiled(
+    # fast = build_fgas_spk_from_compiled(
     #     data_dir=DATA_DIR,
     #     suppression_path=Path(DATA_DIR) / f"Ptot_Pdm_ratio_snap{SNAPSHOT}.npz",
     #     snapshot=SNAPSHOT,

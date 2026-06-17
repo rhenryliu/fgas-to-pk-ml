@@ -3,7 +3,7 @@
 This module is the **single source of truth** for the dataset schema: the
 :class:`FgasSpkDataset` container, the filename/directory convention, the
 save/load round-trip, and the schema version. The builder
-(:mod:`fgas_spk_dataset`) and the training-data loader (:mod:`fgas_spk_loader`)
+(:mod:`fgas_spk_builder`) and the training-data loader (:mod:`fgas_spk_loader`)
 both import from here; neither redefines the contract.
 
 Keeping the contract in one place means the on-disk format has exactly one

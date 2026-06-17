@@ -1,7 +1,7 @@
 """Configurable training-data loader for f_gas(R) to SP(k) models.
 
 This module turns a saved :class:`~fgas_spk_schema.FgasSpkDataset` (written by
-:mod:`fgas_spk_dataset` via :mod:`fgas_spk_schema`) into model-ready numpy
+:mod:`fgas_spk_builder` via :mod:`fgas_spk_schema`) into model-ready numpy
 arrays, according to a :class:`DataConfig`. It is importable by future training
 scripts and runnable as a CLI dry-run.
 
@@ -224,8 +224,8 @@ class DataConfig:
                 f"{required}; missing: {missing}."
             )
         return resolve_dataset_path(
-            self.project_root, self.suite, self.snapshot, self.redshift,
-            self.source, self.rank, self.tag,
+            self.project_root, self.suite, self.snapshot, self.redshift, # type: ignore
+            self.source, self.rank, self.tag, # type: ignore
         )
 
 

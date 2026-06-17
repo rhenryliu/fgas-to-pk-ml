@@ -12,12 +12,12 @@ using the CAMELS IllustrisTNG **SB35** suite. It consumes the per-simulation
 profile products written by `SimulationStacker` and produces model-ready
 training data.
 
-Current contents: `fgas_spk_dataset.py` (the library) and a copy of the
+Current contents: `fgas_spk_builder.py` (the library) and a copy of the
 collaborator-authored reference notebook `test_CAMELS_sixth_gen.ipynb`. The
 notebook is provenance, not the source of truth — the library is the corrected,
 maintained version of its loading logic. `fgas_spk_dataset_v0.py` is a **frozen,
 pre-refactor backup** of the loader, kept only because callers may still source
-it; do not extend or fix it — all changes go to `fgas_spk_dataset.py`.
+it; do not extend or fix it — all changes go to `fgas_spk_builder.py`.
 
 ## How to work here
 
@@ -60,10 +60,10 @@ it; do not extend or fix it — all changes go to `fgas_spk_dataset.py`.
 
 - **Upstream halo-ordering bug.** The CAMELS fork selects halos by stellar mass
   but returns them in FoF catalogue order, so a naive `[:, :n_halos]` slice takes
-  the top-N by FoF mass, not by the selection proxy. `load_fgas_spk_dataset`
+  the top-N by FoF mass, not by the selection proxy. `build_fgas_spk_dataset`
   corrects this by re-ranking columns via `rank_key` before slicing. Any new
   binning code must preserve that fix. The compiled fast path
-  (`load_fgas_spk_from_compiled`) inherits the frozen, uncorrected ordering by
+  (`build_fgas_spk_from_compiled`) inherits the frozen, uncorrected ordering by
   design — use it only for quick iteration.
 - **`rank_key="stellar"` is stubbed.** `SubhaloMStar` is not saved by the
   producer; stellar-mass ranking (the observationally-matched choice) needs a

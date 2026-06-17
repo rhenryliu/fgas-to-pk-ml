@@ -18,7 +18,7 @@ installed package).
 | File | Purpose |
 | --- | --- |
 | `src/fgas_spk_schema.py` | **The on-disk data contract** — single source of truth: the `FgasSpkDataset` container, the filename/directory convention, `save_dataset`/`load_dataset`/`resolve_dataset_path`, and `SCHEMA_VERSION`. |
-| `src/fgas_spk_dataset.py` | Builder: load profiles, fix the halo-ordering bug, assemble `(profile, nd) → SP(k)` arrays. Imports the contract from `fgas_spk_schema`. |
+| `src/fgas_spk_builder.py` | Builder: load profiles, fix the halo-ordering bug, assemble `(profile, nd) → SP(k)` arrays. Imports the contract from `fgas_spk_schema`. |
 | `src/fgas_spk_loader.py` | Configurable training-data loader: read a saved dataset and serve model-ready numpy arrays per a `DataConfig`. Importable by training scripts and runnable as a CLI dry-run. numpy + pyyaml only (no torch). |
 | `src/fgas_spk_dataset_v0.py` | Frozen pre-refactor backup of the loader. Do not extend; kept only because callers may still source it. |
 | `test_CAMELS_sixth_gen.ipynb` | Reference notebook (collaborator-authored) the loader was distilled from. Kept for provenance; not the source of truth. |
@@ -28,7 +28,7 @@ Large data and model checkpoints live separately on scratch (see *Data store*).
 
 ### Importing
 
-The modules are imported by their flat names (`import fgas_spk_dataset`,
+The modules are imported by their flat names (`import fgas_spk_builder`,
 `import fgas_spk_schema`, `import fgas_spk_loader`), so `src/` must be on
 `sys.path`:
 
@@ -47,7 +47,7 @@ The modules are imported by their flat names (`import fgas_spk_dataset`,
 
 ```python
 from pathlib import Path
-import fgas_spk_dataset as F
+import fgas_spk_builder as F
 
 DATA_DIR = "/pscratch/sd/l/lindajin/DH_profile_kSZ_WL/data/"
 BASE = "/pscratch/sd/l/lindajin/CAMELS/IllustrisTNG/L50n512_SB35/SB35_{}/data/"
@@ -55,7 +55,7 @@ SNAPSHOT, REDSHIFT = 74, 0.47        # snap82 -> z=0.21
 
 # Correct path: rebuild number-density bins from raw per-halo profiles,
 # re-ranking halos by mass so the bins are the N most massive (see Caveats).
-dataset = F.load_fgas_spk_dataset(
+dataset = F.build_fgas_spk_dataset(
     base_path_template=BASE,
     suppression_path=Path(DATA_DIR) / f"Ptot_Pdm_ratio_snap{SNAPSHOT}.npz",
     snapshot=SNAPSHOT,
@@ -85,7 +85,7 @@ For quick iteration on the pre-aggregated ratio files instead of raw profiles,
 use the fast path (see Caveats — it does **not** re-rank):
 
 ```python
-fast = F.load_fgas_spk_from_compiled(
+fast = F.build_fgas_spk_from_compiled(
     data_dir=DATA_DIR,
     suppression_path=Path(DATA_DIR) / f"Ptot_Pdm_ratio_snap{SNAPSHOT}.npz",
     snapshot=SNAPSHOT,
@@ -103,8 +103,8 @@ Method: `to_training_arrays(k_target=None) -> (X, nd, y)`.
 
 | Function | What it does |
 | --- | --- |
-| `load_fgas_spk_dataset(base_path_template, suppression_path, snapshot, ...)` | Build a dataset from raw per-simulation profile files for a given snapshot; re-ranks halo columns by `rank_key` before the number-density cut. **Preferred for science.** |
-| `load_fgas_spk_from_compiled(data_dir, suppression_path, snapshot, ...)` | Fast path: load pre-aggregated per-nd ratio files for a given snapshot. Inherits whatever binning was frozen at production; cannot re-rank. |
+| `build_fgas_spk_dataset(base_path_template, suppression_path, snapshot, ...)` | Build a dataset from raw per-simulation profile files for a given snapshot; re-ranks halo columns by `rank_key` before the number-density cut. **Preferred for science.** |
+| `build_fgas_spk_from_compiled(data_dir, suppression_path, snapshot, ...)` | Fast path: load pre-aggregated per-nd ratio files for a given snapshot. Inherits whatever binning was frozen at production; cannot re-rank. |
 | `save_dataset(dataset, project_root, suite, snapshot, redshift, source, ...)` | Write a `.npz` (metadata embedded under `__meta__`) plus a human-readable `.yaml` sidecar. Refuses to overwrite by default. |
 | `load_dataset(npz_path)` | Reconstruct a `FgasSpkDataset` from a saved `.npz`. |
 | `dataset_dir(project_root, suite, snapshot, redshift, source)` | Canonical directory for a provenance bucket. |
@@ -113,7 +113,7 @@ Method: `to_training_arrays(k_target=None) -> (X, nd, y)`.
 
 `save_dataset`, `load_dataset`, `dataset_dir`, `resolve_dataset_path`,
 `ensure_store_dirs`, and `FgasSpkDataset` are defined in `fgas_spk_schema` and
-re-exported from `fgas_spk_dataset` for convenience.
+re-exported from `fgas_spk_builder` for convenience.
 
 Both builders take a required `snapshot` argument (e.g. 74 → z=0.47, 82 → z=0.21),
 which threads into the on-disk filenames. Pass the matching
@@ -182,7 +182,7 @@ same metadata in human-readable form.
 ## Caveats (read before trusting a dataset)
 
 - **Halo-ordering fix.** The upstream CAMELS-fork selection returns halos in FoF
-  catalogue order, not sorted by the selection proxy. `load_fgas_spk_dataset`
+  catalogue order, not sorted by the selection proxy. `build_fgas_spk_dataset`
   re-ranks columns by `rank_key` (default `halo_mass` = M_500c) before slicing
   the top-N, so number-density bins are genuinely the N most massive. The
   compiled fast path cannot do this — it inherits the frozen ordering.

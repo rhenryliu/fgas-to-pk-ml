@@ -1,6 +1,6 @@
 """Pytest configuration: put the ``src/`` module directory on ``sys.path``.
 
-The library modules live in ``src/`` (``fgas_spk_schema``, ``fgas_spk_dataset``,
+The library modules live in ``src/`` (``fgas_spk_schema``, ``fgas_spk_builder``,
 ``fgas_spk_loader``) as loose top-level modules -- not an installed package.
 Prepending ``src/`` here lets the tests import them by name regardless of
 pytest's import mode, with no editable install required. Running the loader CLI

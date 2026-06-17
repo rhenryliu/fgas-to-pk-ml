@@ -1,4 +1,4 @@
-"""Synthetic tests for the loader fixes in ``fgas_spk_dataset.py``.
+"""Synthetic tests for the loader fixes in ``fgas_spk_builder.py``.
 
 No real CAMELS data is required; every fixture is built on the fly. Coverage
 maps to the code-review fixes:
@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import fgas_spk_dataset as m
+import fgas_spk_builder as m
 
 
 # --- builders --------------------------------------------------------------
@@ -90,7 +90,7 @@ def test_compiled_loader_rejects_snapshot_mismatch(tmp_path):
     sup = tmp_path / "Ptot_Pdm_ratio_snap74.npz"
     _write_suppression(sup)
     with pytest.raises(ValueError, match="snap74"):
-        m.load_fgas_spk_from_compiled(tmp_path, sup, snapshot=82)
+        m.build_fgas_spk_from_compiled(tmp_path, sup, snapshot=82)
 
 
 # --- #3 compiled-loader lower-bound guard ----------------------------------
@@ -101,7 +101,7 @@ def test_compiled_loader_too_few_suppression_rows_raises(tmp_path):
     sup = tmp_path / "Ptot_Pdm_ratio_snap74.npz"
     _write_suppression(sup, n_sims=4)  # fewer rows than the 6 compiled sims
     with pytest.raises(ValueError, match="only 4"):
-        m.load_fgas_spk_from_compiled(
+        m.build_fgas_spk_from_compiled(
             tmp_path, sup, snapshot=74, number_densities=nds
         )
 
@@ -111,7 +111,7 @@ def test_compiled_loader_truncates_longer_suppression(tmp_path):
     _write_compiled(tmp_path, nds, n_sims=6)
     sup = tmp_path / "Ptot_Pdm_ratio_snap74.npz"
     _write_suppression(sup, n_sims=10)  # more rows than fgas -> truncate to 6
-    ds = m.load_fgas_spk_from_compiled(
+    ds = m.build_fgas_spk_from_compiled(
         tmp_path, sup, snapshot=74, number_densities=nds
     )
     assert ds.fgas.shape[0] == 6
