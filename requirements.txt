@@ -1,0 +1,49 @@
+# fgas-to-pk-ml --- Python dependencies (pip), cross-platform
+#
+# Designed to install IDENTICAL VERSIONS on both:
+#   - NERSC Perlmutter   (Linux x86_64, NVIDIA A100 -> CUDA torch)
+#   - MacBook Pro M5     (macOS arm64, Apple Silicon -> Metal/MPS torch)
+# Every package below ships wheels for both platforms, so nothing compiles
+# from source on either machine. Verified + resolved consistently 2026-06-17.
+#
+# CROSS-PLATFORM RULES (important):
+#   1. Do NOT replace this with `pip freeze`. A freeze on NERSC pins the
+#      nvidia-*-cu13 / triton CUDA stack, which has no arm64-mac wheels and
+#      will fail to install on the Mac (and vice versa: a Mac freeze gives you
+#      a CPU torch on NERSC). Pin top-level packages only, as done here.
+#   2. Keep torch as a clean upstream pin (`torch==2.12.0`) with NO `+cuXXX`
+#      local tag and NO `--index-url`. PyPI then serves the CUDA wheel on Linux
+#      and the MPS wheel on macOS automatically.
+#   3. Pick the compute device at runtime, not at install time -- see SETUP
+#      notes for the cuda/mps/cpu helper so the code itself stays identical.
+#
+# Target: Python 3.11 or 3.12 (numpy 2.4 / matplotlib 3.11 require >= 3.11).
+# Install into an activated env:  pip install -r requirements.txt
+
+# --- Core numerics / IO ---
+numpy==2.4.6
+scipy==1.17.1
+scikit-learn==1.9.0    # PCA, GP regression, GroupKFold (split-by-sim)
+h5py==3.16.0           # read CAMELS HDF5 group catalogues (e.g. stellar-mass re-rank)
+pyyaml==6.0.3          # dataset .yaml sidecar manifests
+tqdm==4.68.3           # progress callbacks
+
+# --- Cosmology / baryon models (gate #1 references + external S(k) cross-checks) ---
+pyccl==3.3.4           # halo-model engine + NFW reference for gate #1 (manylinux + macos-arm64 wheels)
+colossus==1.4.0        # profiles / c(M) / bias; second, h-ful-units gate-#1 reference (pure python)
+pyspk==2.0.1           # SP(k) (Salcido+ 2023): S(k) from f_b -> external consistency check (pure python)
+BCemu==2.0.5           # baryonification emulator -> second external check (pure python)
+# baccoemu==2.3.0      # optional third emulator (BACCO); uncomment for a third cross-check
+
+# --- ML / inference (HEAVY tier; only needed at the neural-CDE stage) ---
+# Comment out this block for a lean env while working the NFW / cross-suite / PCA gates.
+# On Linux this pulls ~3-4 GB of CUDA libs; on macOS it pulls the small MPS build.
+torch==2.12.0          # sbi backend; CUDA wheel on Linux, MPS wheel on macOS (same version string)
+sbi==0.26.1            # neural posterior estimation for p(S(k) | profile-params)
+gpytorch==1.15.2       # conditional-GP alternative for the profile -> S(k) mapping (pure python)
+
+# --- Notebooks / dev ---
+jupyterlab==4.5.9
+ipykernel==7.3.0       # register this env as a Jupyter kernel on each machine
+matplotlib==3.11.0
+pytest==9.1.0          # the repo's conftest.py puts src/ on sys.path for tests

@@ -1,0 +1,21 @@
+# fgas-to-pk-ml --- conda environment
+#
+#   conda env create -f environment.yml
+#   conda activate fgas-ml
+#
+# Rationale: pyccl ships manylinux wheels and torch is best installed from pip,
+# so an all-pip stack inside a clean conda env is the simplest reproducible
+# setup. requirements.txt is the single source of truth for package versions;
+# conda only provides the interpreter and pip.
+#
+# If you specifically want conda-forge-managed BLAS / HDF5 on a cluster (e.g.
+# NERSC), move numpy / scipy / h5py up into the `dependencies:` list below --
+# the pip lines will then see them as already satisfied and skip them.
+name: fgas-ml
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - -r requirements.txt

@@ -39,9 +39,61 @@ The modules are imported by their flat names (`import fgas_spk_builder`,
 
 ## Requirements
 
+The library itself (the `src/` modules) imports only:
+
 - Python ≥ 3.10
 - `numpy`
 - `pyyaml` (optional; without it the sidecar manifest is written as JSON instead)
+
+The cosmology and ML dependencies (pyccl, colossus, SP(k)/BCemu, scikit-learn,
+torch/sbi, …) are **not** part of the library's import surface — they live in the
+pinned environment files below, for the gate and training scripts.
+
+## Environment
+
+`environment.yml` and `requirements.txt` define one exact-pinned environment that
+installs identically on both target platforms — NERSC Perlmutter (Linux x86_64,
+CUDA) and an Apple-Silicon Mac (macOS arm64, MPS) — entirely from pre-built wheels
+(nothing compiles from source on either). The exact `==` pins are intentional:
+this is an *environment* spec meant to reproduce a known-good setup across
+machines, not a library dependency declaration. If this ever becomes an installed
+package, its `install_requires` should use floors, not these pins.
+
+```bash
+conda env create -f environment.yml     # Python 3.12 from conda-forge + pip deps
+conda activate fgas-ml
+pip install -r requirements.txt
+python -m ipykernel install --user --name fgas-ml --display-name "fgas-ml"
+```
+
+Cross-platform notes:
+
+- **Do not** regenerate `requirements.txt` with `pip freeze`. A freeze on
+  Perlmutter pins the `nvidia-*` CUDA stack (no arm64-mac wheels); a freeze on the
+  Mac pins a CPU/MPS torch (no CUDA on NERSC). Pin top-level packages only, as the
+  file does.
+- Keep `torch` as a clean upstream pin — no `+cuXXX` local version, no
+  `--index-url` in the shared file. PyPI then serves the CUDA wheel on Linux and
+  the MPS wheel on macOS from the same version string.
+- Choose the compute device at runtime so the code is identical on every machine:
+
+```python
+  import torch
+
+  def pick_device() -> torch.device:
+      """Return the best available device (CUDA on NERSC, MPS on Apple Silicon, else CPU)."""
+      if torch.cuda.is_available():
+          return torch.device("cuda")
+      if torch.backends.mps.is_available():
+          return torch.device("mps")
+      return torch.device("cpu")
+```
+
+- The pinned env requires Python ≥ 3.12 (driven by numpy 2.4, not by the code,
+  which runs on ≥ 3.10). For lockfile-grade reproducibility across machines — and
+  the future ARM-Linux NERSC-10 ("Doudna") system, where pyccl currently lacks an
+  aarch64 wheel and would come from conda-forge — generate a multi-platform lock
+  with `uv` or `conda-lock` rather than relying on these top-level pins.
 
 ## Quickstart
 

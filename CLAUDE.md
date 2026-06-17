@@ -37,6 +37,32 @@ it; do not extend or fix it — all changes go to `fgas_spk_builder.py`.
   h-factored units (e.g. `colossus`, BCemu, SP(k)), convert explicitly at the
   boundary and document it. Do not let h-factors leak silently between layers.
 
+## Environment
+
+The canonical environment is two git-tracked files at the repo root:
+`environment.yml` (conda-forge Python 3.12 + pip) and `requirements.txt` (exact,
+top-level pins). They are designed to install identically on NERSC Perlmutter
+(Linux x86_64, CUDA) and an Apple-Silicon Mac (macOS arm64, MPS), entirely from
+wheels.
+
+Rules for the environment (in addition to binding rule 2 — *do not modify the
+environment without explicit permission*):
+
+- The pins are exact (`==`) on purpose: this is an environment spec for
+  cross-machine reproduction, not a library dependency declaration. Do not relax
+  them to floors here, and do not regenerate the file with `pip freeze` — a freeze
+  bakes in platform-specific transitive deps (the `nvidia-*` CUDA stack on Linux,
+  a CPU/MPS torch on macOS) that break the other platform.
+- Keep `torch` pinned by upstream version only — never add a `+cuXXX` local
+  version or an `--index-url` to the shared file. The correct wheel (CUDA on
+  Linux, MPS on macOS) is resolved per platform from the same version string;
+  device selection happens at runtime, not install time.
+- Bumping a pin is a deliberate, reviewed edit, not a side effect of reinstalling
+  — consistent with the gated workflow.
+- The library's own import surface is only numpy + pyyaml (+ stdlib). The
+  cosmology/ML pins (pyccl, colossus, SP(k)/BCemu, scikit-learn, torch/sbi, …) are
+  for gate and training scripts, not the data-assembly modules.
+
 ## Binding rules
 
 1. **Do not call external libraries from memory.** Verify a function's real
