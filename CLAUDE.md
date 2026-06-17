@@ -56,29 +56,34 @@ truth — the library is the corrected, maintained version of its loading logic.
 
 ## Environment
 
-The canonical environment is two git-tracked files at the repo root:
-`environment.yml` (conda-forge Python 3.12 + pip) and `requirements.txt` (exact,
-top-level pins). They are designed to install identically on NERSC Perlmutter
-(Linux x86_64, CUDA) and an Apple-Silicon Mac (macOS arm64, MPS), entirely from
-wheels.
+The canonical environment is two git-tracked files at the repo root: `environment.yml`
+(conda-forge Python 3.12 + pip) and `requirements.txt` (exact, top-level pins). They
+install matched versions on NERSC Perlmutter (Linux x86_64, CUDA) and an Apple-Silicon
+Mac (macOS arm64, MPS), almost entirely from wheels.
 
-Rules for the environment (in addition to binding rule 2 — *do not modify the
-environment without explicit permission*):
+Rules for the environment (extending binding rule 2 — *do not modify the environment
+without explicit permission*):
 
-- The pins are exact (`==`) on purpose: this is an environment spec for
-  cross-machine reproduction, not a library dependency declaration. Do not relax
-  them to floors here, and do not regenerate the file with `pip freeze` — a freeze
-  bakes in platform-specific transitive deps (the `nvidia-*` CUDA stack on Linux,
-  a CPU/MPS torch on macOS) that break the other platform.
-- Keep `torch` pinned by upstream version only — never add a `+cuXXX` local
-  version or an `--index-url` to the shared file. The correct wheel (CUDA on
-  Linux, MPS on macOS) is resolved per platform from the same version string;
-  device selection happens at runtime, not install time.
-- Bumping a pin is a deliberate, reviewed edit, not a side effect of reinstalling
-  — consistent with the gated workflow.
-- The library's own import surface is only numpy + pyyaml (+ stdlib). The
-  cosmology/ML pins (pyccl, colossus, SP(k)/BCemu, scikit-learn, torch/sbi, …) are
-  for gate and training scripts, not the data-assembly modules.
+- The pins are exact (`==`) on purpose: this is an environment spec for cross-machine
+  reproduction, not a library dependency declaration. Do not relax them to floors here,
+  and do not regenerate the file with `pip freeze` — a freeze bakes in platform-specific
+  transitive deps (the `nvidia-*` CUDA stack on Linux, a CPU/MPS torch on macOS) that
+  break the other platform.
+- Keep `torch` pinned by upstream version only — never a `+cuXXX` local version or an
+  `--index-url` in the shared file. The correct wheel (CUDA on Linux, MPS on macOS) is
+  resolved per platform; device selection happens at runtime, not install time.
+- The base `requirements.txt` is wheel-only and must stay installable on both platforms.
+  Compile-from-source / single-platform packages do not belong in it. **Pylians** is the
+  current example: it fails to build on Apple Silicon (the released sdist mis-quotes the
+  macOS OpenMP flag) and is commented out; it is NERSC-side (Linux/gcc) and, when adopted,
+  belongs in a separate `requirements-nersc.txt`. `pypower` covers P(k) estimation
+  cross-platform in the meantime.
+- Bumping a pin is a deliberate, reviewed edit, not a side effect of reinstalling —
+  consistent with the gated workflow.
+- The library's own import surface is only numpy + pyyaml (+ stdlib). The cosmology/ML
+  pins (pyccl, colossus, SP(k)/BCemu, scikit-learn, torch/sbi, pandas, astropy, pypower,
+  corner, getdist, …) are for gate, analysis, and training scripts, not the data-assembly
+  modules.
 
 ## Binding rules
 

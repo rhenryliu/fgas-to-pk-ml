@@ -53,31 +53,40 @@ pinned environment files below, for the gate and training scripts.
 
 ## Environment
 
-`environment.yml` and `requirements.txt` define one exact-pinned environment that
-installs identically on both target platforms — NERSC Perlmutter (Linux x86_64,
-CUDA) and an Apple-Silicon Mac (macOS arm64, MPS) — entirely from pre-built wheels
-(nothing compiles from source on either). The exact `==` pins are intentional:
-this is an *environment* spec meant to reproduce a known-good setup across
-machines, not a library dependency declaration. If this ever becomes an installed
-package, its `install_requires` should use floors, not these pins.
+`environment.yml` and `requirements.txt` (repo root) define one pinned environment
+that installs matched package versions on both target platforms — NERSC Perlmutter
+(Linux x86_64, CUDA) and an Apple-Silicon Mac (macOS arm64, MPS). Python is 3.12
+(3.11 also works; numpy 2.4 sets the ≥3.11 floor). Almost everything installs from
+pre-built wheels; the one compile-from-source exception is noted below.
+
+Two ways to create it:
 
 ```bash
-conda env create -f environment.yml     # Python 3.12 from conda-forge + pip deps
+# Route A — environment.yml (its pip: block installs requirements.txt for you):
+conda env create -f environment.yml
+conda activate fgas-ml
+
+# Route B — bare conda env, then install deps explicitly:
+conda create -n fgas-ml -c conda-forge python=3.12
 conda activate fgas-ml
 pip install -r requirements.txt
+```
+
+Then register the env as a Jupyter kernel on each machine:
+
+```bash
 python -m ipykernel install --user --name fgas-ml --display-name "fgas-ml"
 ```
 
-Cross-platform notes:
+Cross-platform rules:
 
-- **Do not** regenerate `requirements.txt` with `pip freeze`. A freeze on
-  Perlmutter pins the `nvidia-*` CUDA stack (no arm64-mac wheels); a freeze on the
-  Mac pins a CPU/MPS torch (no CUDA on NERSC). Pin top-level packages only, as the
-  file does.
-- Keep `torch` as a clean upstream pin — no `+cuXXX` local version, no
-  `--index-url` in the shared file. PyPI then serves the CUDA wheel on Linux and
-  the MPS wheel on macOS from the same version string.
-- Choose the compute device at runtime so the code is identical on every machine:
+- **Do not** regenerate `requirements.txt` with `pip freeze`. A freeze on Perlmutter
+  pins the `nvidia-*` CUDA stack (no arm64-mac wheels); a freeze on the Mac pins a
+  CPU/MPS torch (no CUDA on NERSC). The file pins top-level packages only, on purpose.
+- Keep `torch` a clean upstream pin — no `+cuXXX` local version, no `--index-url` in
+  the shared file. PyPI serves the CUDA wheel on Linux and the MPS wheel on macOS from
+  the same version string.
+- Select the compute device at runtime so the code is identical on every machine:
 
 ```python
   import torch
@@ -91,11 +100,18 @@ Cross-platform notes:
       return torch.device("cpu")
 ```
 
-- The pinned env requires Python ≥ 3.12 (driven by numpy 2.4, not by the code,
-  which runs on ≥ 3.10). For lockfile-grade reproducibility across machines — and
-  the future ARM-Linux NERSC-10 ("Doudna") system, where pyccl currently lacks an
-  aarch64 wheel and would come from conda-forge — generate a multi-platform lock
-  with `uv` or `conda-lock` rather than relying on these top-level pins.
+- **Pylians is NERSC-side and commented out by default.** Its released sdist mis-quotes
+  the macOS OpenMP flag and fails to build on Apple Silicon (even with `libomp`); it
+  builds cleanly on Linux/gcc. Uncomment and `pip install` it on NERSC when you need
+  CAMELS field/P(k) tools. `pypower` (installed by default, pure-Python wheel) covers
+  P(k) estimation in the meantime. When adopting compile-from-source packages, keep them
+  in a separate `requirements-nersc.txt` so the base file stays wheel-only and
+  cross-platform.
+
+For lockfile-grade reproducibility across machines — and the future ARM-Linux NERSC-10
+("Doudna") system, where pyccl currently has no aarch64 wheel and would come from
+conda-forge — generate a multi-platform lock with `uv` or `conda-lock` rather than
+relying on these top-level pins.
 
 ## Quickstart
 
@@ -191,13 +207,27 @@ cfg = L.DataConfig(
     snapshot=74, redshift=0.47, source="lindajin", rank="m500", tag="latest",
     number_density_indices=[0, 2, 4],   # subset of the five nds (None = all)
     radial_range_mpch=(0.3, 2.5),       # crop profile radii (None = all)
-    include_nd_feature=True,            # append the number density as a feature
+    include_nd_feature=True,            # number density -> X_cond
+    include_camels_params=True,         # CAMELS params -> X_params (on by default)
     target_mode="curve",               # or "single_k" (+k_target) / "k_range" (+k_range)
 )
 td = L.load_training_data(cfg)
-# td.X (n_examples, n_features), td.y, td.nd, td.sim_index, td.k, td.radii_mpch,
-# td.source_path, td.meta, td.config
+# td.y, td.nd, td.sim_index, td.k, td.radii_mpch, td.source_path, td.meta, td.config
 ```
+
+Inputs are served as **separate modalities** rather than one concatenated array,
+so a multimodal model can route each branch independently (a single-input model
+can concatenate them itself):
+
+| Attribute | Shape | Contents | `None` when |
+| --- | --- | --- | --- |
+| `td.X` | `(n_examples, n_radii_sel)` | the `f_gas(R)` profile alone (columns are `td.radii_mpch`) | — |
+| `td.X_cond` | `(n_examples, n_cond)` | observable-derived scalars: number density (if `include_nd_feature`) then mean `M_500c` (if `include_mean_halo_mass`) | no conditioning feature requested |
+| `td.X_params` | `(n_examples, n_params)` | the simulation's CAMELS parameters, aligned to `td.sim_index` | `include_camels_params=False` |
+
+`include_camels_params` defaults to `True`; with it on, a dataset that carries no
+CAMELS params **raises** rather than silently dropping them — set it `False` to
+load a param-less dataset.
 
 Each row is one `(simulation, number-density)` pair. `td.sim_index` gives the
 originating simulation id per row so a downstream script can **split by

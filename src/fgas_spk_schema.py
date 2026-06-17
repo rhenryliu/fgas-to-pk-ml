@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import re
+import warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -96,6 +97,18 @@ class FgasSpkDataset:
         the input is that stack's gas-fraction profile, the conditioning value
         is the number density, and the target is the simulation's suppression.
 
+        Note:
+            This is a minimal in-memory convenience for a dataset you already
+            hold (e.g. a quick check right after building). It is **not** the
+            training entry point: it offers no simulation/number-density subset,
+            no radial crop, no ``k`` targeting beyond a single bin, and no
+            ``X_cond``/``X_params`` modality split. For real training work, save
+            the dataset with :func:`save_dataset` and load it through
+            :mod:`fgas_spk_loader` (``load_training_data``), which is the
+            configurable, reproducible path. Calling this method emits a
+            ``UserWarning`` to that effect; silence it with
+            :func:`warnings.filterwarnings` if the shortcut is what you want.
+
         Args:
             k_target (float, optional): If given, the target is SP(k) at the
                 single wavenumber closest to ``k_target`` (h/Mpc), giving a
@@ -110,6 +123,16 @@ class FgasSpkDataset:
                 - ``y_target`` has shape (n_examples,) if ``k_target`` is set,
                   else (n_examples, n_k).
         """
+        warnings.warn(
+            "FgasSpkDataset.to_training_arrays is an in-memory convenience, not "
+            "the training entry point: it has no subsetting, radial crop, or "
+            "X_cond/X_params modality split. For training, save the dataset and "
+            "load it via fgas_spk_loader.load_training_data. Silence this with "
+            "warnings.filterwarnings if the shortcut is intended.",
+            UserWarning,
+            stacklevel=2,
+        )
+
         n_sims, n_nd, n_radii = self.fgas.shape
         x_profiles = self.fgas.reshape(n_sims * n_nd, n_radii)
         nd_condition = np.repeat(self.number_densities[None, :], n_sims, axis=0).reshape(-1)

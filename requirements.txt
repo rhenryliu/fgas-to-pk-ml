@@ -1,10 +1,11 @@
 # fgas-to-pk-ml --- Python dependencies (pip), cross-platform
 #
-# Designed to install IDENTICAL VERSIONS on both:
+# Designed to install matched VERSIONS on both:
 #   - NERSC Perlmutter   (Linux x86_64, NVIDIA A100 -> CUDA torch)
 #   - MacBook Pro M5     (macOS arm64, Apple Silicon -> Metal/MPS torch)
-# Every package below ships wheels for both platforms, so nothing compiles
-# from source on either machine. Verified + resolved consistently 2026-06-17.
+# Nearly everything below ships wheels for both platforms and installs without
+# compiling. The ONE exception is Pylians (sdist-only) -- see its block.
+# Verified + resolved consistently 2026-06-17.
 #
 # CROSS-PLATFORM RULES (important):
 #   1. Do NOT replace this with `pip freeze`. A freeze on NERSC pins the
@@ -17,7 +18,7 @@
 #   3. Pick the compute device at runtime, not at install time -- see SETUP
 #      notes for the cuda/mps/cpu helper so the code itself stays identical.
 #
-# Target: Python 3.11 or 3.12 (numpy 2.4 / matplotlib 3.11 require >= 3.11).
+# Target: Python 3.12 (3.11 also supported; numpy 2.4 requires >= 3.11).
 # Install into an activated env:  pip install -r requirements.txt
 
 # --- Core numerics / IO ---
@@ -25,6 +26,8 @@ numpy==2.4.6
 scipy==1.17.1
 scikit-learn==1.9.0    # PCA, GP regression, GroupKFold (split-by-sim)
 h5py==3.16.0           # read CAMELS HDF5 group catalogues (e.g. stellar-mass re-rank)
+pandas==3.0.3          # CAMELS Sobol param matrix + results tables (pandas 3.x; 2.x is the conservative fallback)
+astropy==7.0.0         # FITS I/O for obs data (HSC/DESI/ACT), units, constants
 pyyaml==6.0.3          # dataset .yaml sidecar manifests
 tqdm==4.68.3           # progress callbacks
 
@@ -35,12 +38,24 @@ pyspk==2.0.1           # SP(k) (Salcido+ 2023): S(k) from f_b -> external consis
 BCemu==2.0.5           # baryonification emulator -> second external check (pure python)
 # baccoemu==2.3.0      # optional third emulator (BACCO); uncomment for a third cross-check
 
-# --- ML / inference (HEAVY tier; only needed at the neural-CDE stage) ---
+# --- Power-spectrum estimation (forward-looking: for the true paired-DMO S(k) target to-do) ---
+pypower==5.1.19        # cosmodesi P(k) estimator; pure-python wheel. Optional pmesh backend (compiles, MPI) not needed at 50 Mpc/h.
+# Pylians: CAMELS-native (Villaescusa-Navarro). sdist-only -> COMPILES from source,
+# needs a C compiler + OpenMP. Fine on NERSC (gcc); on macOS arm64 it usually needs
+# `brew install libomp` and CC/CXX flags, and is NOT guaranteed to be a clean
+# identical install across both machines. Treat as NERSC-side / optional if it fights you.
+# Pylians==0.12
+
+# --- ML / inference (HEAVY tier: only needed at the neural-CDE stage, not for the early gates) ---
 # Comment out this block for a lean env while working the NFW / cross-suite / PCA gates.
 # On Linux this pulls ~3-4 GB of CUDA libs; on macOS it pulls the small MPS build.
 torch==2.12.0          # sbi backend; CUDA wheel on Linux, MPS wheel on macOS (same version string)
 sbi==0.26.1            # neural posterior estimation for p(S(k) | profile-params)
 gpytorch==1.15.2       # conditional-GP alternative for the profile -> S(k) mapping (pure python)
+
+# --- Plotting / posterior visualization ---
+corner==2.2.3          # SBI posterior corner plots (pure python)
+getdist==1.7.7         # cosmology-idiom constraint/contour plots (pure python)
 
 # --- Notebooks / dev ---
 jupyterlab==4.5.9

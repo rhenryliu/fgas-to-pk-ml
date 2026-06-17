@@ -37,12 +37,14 @@ Example config (YAML)::
     # Simulation subset (by simulation id; null = all):
     sim_ids: null
 
-    # Inputs / features:
+    # Inputs / features (returned as separate modalities, not concatenated:
+    # the profile in X, the conditioning scalars below in X_cond, and the
+    # CAMELS params in X_params):
     number_density_indices: [0, 1, 2, 3, 4]   # null = all five
     radial_range_mpch: [0.1, 2.0]             # null = full radial range
-    include_nd_feature: true                  # append the number density
-    include_mean_halo_mass: false             # append mean M_500c
-    include_camels_params: true              # append CAMELS params (on by default)
+    include_nd_feature: true                  # number density -> X_cond
+    include_mean_halo_mass: false             # mean M_500c -> X_cond
+    include_camels_params: true               # CAMELS params -> X_params (on by default)
 
     # Target:
     target_mode: curve        # one of: curve | single_k | k_range
@@ -53,9 +55,9 @@ CLI::
 
     python src/fgas_spk_loader.py --config config.yaml
 
-prints a summary (resolved path, ``X``/``y`` shapes, number-density values,
-target mode, n_sims) and exits. It loads but does not train and has no side
-effects.
+prints a summary (resolved path, ``X``/``X_cond``/``X_params``/``y`` shapes,
+number-density values, target mode, n_sims) and exits. It loads but does not
+train and has no side effects.
 """
 
 from __future__ import annotations
@@ -106,9 +108,11 @@ class DataConfig:
             feature column. Defaults to True.
         include_mean_halo_mass (bool): Append the stack's mean M_500c [M_sun/h]
             as a feature column. Defaults to False.
-        include_camels_params (bool): Append the simulation's CAMELS parameters
-            as feature columns. Defaults to False, to preserve the
-            model-independent framing; requires the dataset to carry params.
+        include_camels_params (bool): Load the simulation's CAMELS parameters
+            into the separate :attr:`TrainingData.X_params` modality (not
+            concatenated into ``X``). Defaults to True. With it enabled, a
+            dataset that carries no params raises rather than silently omitting
+            them; set this False to opt out for param-less datasets.
         target_mode (str): One of ``"curve"`` (full SP(k) curve), ``"single_k"``
             (scalar at the nearest k bin), or ``"k_range"`` (SP(k) over an
             inclusive k-window). Defaults to ``"curve"``.
@@ -233,13 +237,25 @@ class DataConfig:
 class TrainingData:
     """Model-ready numpy arrays produced from a :class:`DataConfig`.
 
+    Inputs are split into modalities rather than concatenated: ``X`` is the
+    gas-fraction profile alone, ``X_cond`` holds observable-derived conditioning
+    scalars, and ``X_params`` holds the simulation's CAMELS parameters. A
+    multimodal model can route each branch separately; a single-input model can
+    concatenate them itself.
+
     Attributes:
-        X (np.ndarray): Inputs, shape (n_examples, n_features). The leading
-            columns are the (optionally cropped) gas-fraction profile, followed
-            by any appended features in this order: number density (if
-            ``include_nd_feature``), mean halo mass (if
-            ``include_mean_halo_mass``), CAMELS params (if
-            ``include_camels_params``).
+        X (np.ndarray): The (optionally cropped) gas-fraction profile, shape
+            (n_examples, n_radii_sel). The columns correspond to
+            :attr:`radii_mpch`. No conditioning features are appended here.
+        X_cond (np.ndarray, optional): Observable-derived conditioning scalars,
+            shape (n_examples, n_cond), or None if none were requested. Columns,
+            in fixed order: number density [(Mpc/h)^-3] (if ``include_nd_feature``)
+            then mean halo mass M_500c [M_sun/h] (if ``include_mean_halo_mass``).
+        X_params (np.ndarray, optional): The simulation's CAMELS parameters,
+            shape (n_examples, n_params), aligned with ``sim_index`` (a sim's
+            params are repeated across its number densities). None unless
+            ``include_camels_params`` is set; see that flag for the param-less
+            behaviour.
         y (np.ndarray): Target. Shape (n_examples, n_k_sel) for ``curve`` and
             ``k_range``; shape (n_examples,) for ``single_k``.
         nd (np.ndarray): Number-density value for each row, shape (n_examples,),
@@ -257,6 +273,8 @@ class TrainingData:
     """
 
     X: np.ndarray
+    X_cond: np.ndarray | None
+    X_params: np.ndarray | None
     y: np.ndarray
     nd: np.ndarray
     sim_index: np.ndarray
@@ -369,22 +387,29 @@ def load_training_data(config: DataConfig) -> TrainingData:
     sim_ids_sel = np.asarray(dataset.sim_ids)[rows]              # (S,)
     sim_index = np.repeat(sim_ids_sel, n_nd_sel)                 # (S*M,)
 
-    # Appended feature columns, in a fixed, documented order.
-    feature_blocks = [x_profiles]
+    # Inputs are kept as separate modalities. X is the profile alone; the
+    # observable-derived conditioning scalars go into X_cond (fixed column
+    # order: nd, then mean halo mass); the CAMELS parameters go into X_params.
+    X = x_profiles
+
+    cond_blocks = []
     if config.include_nd_feature:
-        feature_blocks.append(nd_per_row[:, None])
+        cond_blocks.append(nd_per_row[:, None])
     if config.include_mean_halo_mass:
         mhm = dataset.mean_halo_mass[np.ix_(rows, nd_idx)]       # (S, M)
-        feature_blocks.append(mhm.reshape(n_rows, 1))
+        cond_blocks.append(mhm.reshape(n_rows, 1))
+    X_cond = np.hstack(cond_blocks) if cond_blocks else None
+
+    X_params = None
     if config.include_camels_params:
         if dataset.camels_params is None:
             raise ValueError(
                 "include_camels_params=True but the dataset has no "
-                "camels_params (it was saved without a params_path)."
+                "camels_params (it was saved without a params_path). Set "
+                "include_camels_params=False to load this param-less dataset."
             )
         params_sel = np.asarray(dataset.camels_params)[rows]     # (S, n_params)
-        feature_blocks.append(np.repeat(params_sel, n_nd_sel, axis=0))
-    X = np.hstack(feature_blocks)
+        X_params = np.repeat(params_sel, n_nd_sel, axis=0)       # (S*M, n_params)
 
     # Target shaping. The suppression curve is per-simulation, so each sim's row
     # is repeated across its number densities.
@@ -412,6 +437,8 @@ def load_training_data(config: DataConfig) -> TrainingData:
 
     return TrainingData(
         X=X,
+        X_cond=X_cond,
+        X_params=X_params,
         y=y,
         nd=nd_per_row,
         sim_index=sim_index,
@@ -427,9 +454,13 @@ def _summarize(td: TrainingData) -> str:
     """Build the CLI dry-run summary string for a loaded TrainingData."""
     nd_values = np.unique(td.nd)
     target_mode = td.config.target_mode if td.config is not None else "?"
+    cond_shape = td.X_cond.shape if td.X_cond is not None else "none"
+    params_shape = td.X_params.shape if td.X_params is not None else "none"
     lines = [
         f"resolved path : {td.source_path}",
-        f"X shape       : {td.X.shape}  (n_examples, n_features)",
+        f"X shape       : {td.X.shape}  (n_examples, n_radii) [profile]",
+        f"X_cond shape  : {cond_shape}  (nd, mean_halo_mass)",
+        f"X_params shape: {params_shape}  (CAMELS params)",
         f"y shape       : {td.y.shape}  (target_mode={target_mode})",
         f"n_examples    : {td.X.shape[0]}",
         f"n_sims        : {np.unique(td.sim_index).size}",
