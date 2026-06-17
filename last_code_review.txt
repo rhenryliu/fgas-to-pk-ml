@@ -1,0 +1,55 @@
+rhliu@login22:~/projects/fgas-to-pk-ml> REVIEW=1 git push
+================================================
+Claude Code Review
+================================================
+The pre-push-reviewer finished its review of `f9175c8..966038b`. Here's what it found.
+
+## Summary
+The structural refactor — extracting `fgas_spk_schema.py`, adding `fgas_spk_loader.py` (`DataConfig`/`TrainingData`), plus the new test suite — is well-organized with genuine test coverage. But there are three correctness issues worth fixing before this goes further.
+
+## Critical
+
+**1. Silent halo-count clamp corrupts `number_densities`** — `src/fgas_spk_builder.py:278`
+```python
+n_use = min(n_halos, fgas.shape[1])
+```
+When a sim has fewer halos than requested, it silently uses what's available. The `mean_halo_mass` is then computed over a smaller sample, and the `number_densities` stored in the dataset no longer matches the actual sample size for that sim. Should at least warn, ideally record per-sim actual counts or raise.
+
+**2. `suppression_all[sim_id]` indexes by raw id, not array position** — `src/fgas_spk_builder.py:288`
+```python
+kept_suppression.append(suppression_all[sim_id])
+```
+`suppression_all` is 0-based by row *position*. This is correct only because SB35 has contiguous `sim_id`s matching row order — undocumented and fragile. Note `_load_params` already has the equivalent guard (`:165`); the builder doesn't. Add a bounds/ordering guard or document the coupling.
+
+**3. No checkpointing in the 1024-sim loop** — a single missing/corrupt profile file aborts a multi-hour run and discards everything loaded so far. Suggests a `skip_missing: bool = False` argument so the caller decides.
+
+## Warnings
+
+**4. `NpzFile` handle leak** — `src/fgas_spk_builder.py:90` (also `:246`, `:366`, `:164`). `np.load` on `.npz` returns a lazy archive handle that's never closed; over 1024 sims this can exhaust per-process fd limits on NERSC. Wrap in `with np.load(...) as data:`. **This is the one most likely to bite in production.**
+
+**5. Inconsistent `yaml` import guarding** — `fgas_spk_loader.py:69` imports `yaml` hard at module level, while `fgas_spk_schema.py:31` guards it with `try/except` + `_HAS_YAML`. Pick one policy (either guard both, or make it a documented hard dep and drop the guard in schema).
+
+**6. Dead invariant check** — `src/fgas_spk_builder.py:293-298`: the `suppression.shape[0] != len(kept_ids)` check is structurally unreachable (appended in lockstep; `np.stack` would raise first). The real guard belongs *before* the loop (ties into #2).
+
+**7. Unguarded `.min()`/`.max()` on possibly-empty `td.k`** — `fgas_spk_loader.py:438-440` in `_summarize`; returns misleading `nan` for an empty-k dataset. Same for `td.radii_mpch`.
+
+## Suggestions
+- **8.** `params_path` missing from `build_fgas_spk_dataset` docstring `Args:` (`:202-242`).
+- **9.** The `suppression` proxy-target caveat (P_total/P_DM, not paired-DMO) lives only in CLAUDE.md — add it to the `units`/meta dict so the `.npz` is self-describing.
+- **10.** `_load_one_simulation` return type `dict[str, np.ndarray]` is wrong — `fb` is a `float`, papered over with `# type: ignore` (`:142`).
+- **11.** No test exercises the `progress` callback.
+- **12.** Hardcoded `lindajin`/`rhliu` scratch paths in the `__main__` block (`:419-421`) — known tech debt per CLAUDE.md, not blocking.
+
+A few of these (#2, #9) touch the physics/I/O-semantics boundary that CLAUDE.md flags for maintainer decisions rather than silent fixes. Want me to implement any of these — and if so, the critical three first?
+================================================
+Review complete. Proceeding with push.
+================================================
+Enumerating objects: 19, done.
+Counting objects: 100% (19/19), done.
+Delta compression using up to 256 threads
+Compressing objects: 100% (11/11), done.
+Writing objects: 100% (11/11), 9.33 KiB | 4.66 MiB/s, done.
+Total 11 (delta 6), reused 0 (delta 0), pack-reused 0 (from 0)
+remote: Resolving deltas: 100% (6/6), completed with 6 local objects.
+To https://github.com/rhenryliu/fgas-to-pk-ml.git
+   f9175c8..966038b  main -> main
