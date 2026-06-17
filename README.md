@@ -34,12 +34,14 @@ import fgas_spk_dataset as F
 
 DATA_DIR = "/pscratch/sd/l/lindajin/DH_profile_kSZ_WL/data/"
 BASE = "/pscratch/sd/l/lindajin/CAMELS/IllustrisTNG/L50n512_SB35/SB35_{}/data/"
+SNAPSHOT, REDSHIFT = 74, 0.47        # snap82 -> z=0.21
 
 # Correct path: rebuild number-density bins from raw per-halo profiles,
 # re-ranking halos by mass so the bins are the N most massive (see Caveats).
 dataset = F.load_fgas_spk_dataset(
     base_path_template=BASE,
-    suppression_path=Path(DATA_DIR) / "Ptot_Pdm_ratio_k_le15.npz",
+    suppression_path=Path(DATA_DIR) / f"Ptot_Pdm_ratio_snap{SNAPSHOT}.npz",
+    snapshot=SNAPSHOT,
     rank_key="halo_mass",                              # M_500c ranking
     params_path=Path(DATA_DIR) / "camels_params_matrix.npy",   # optional
 )
@@ -56,7 +58,7 @@ PROJECT = "/pscratch/sd/r/rhliu/projects/fgas-to-pk-ml"
 F.ensure_store_dirs(PROJECT)
 out = F.save_dataset(
     dataset, project_root=PROJECT,
-    suite="CAMELS-IllustrisTNG-L50n512-SB35", snapshot=74, redshift=0.47,
+    suite="CAMELS-IllustrisTNG-L50n512-SB35", snapshot=SNAPSHOT, redshift=REDSHIFT,
     source="lindajin",
 )
 reloaded = F.load_dataset(out)
@@ -68,7 +70,8 @@ use the fast path (see Caveats — it does **not** re-rank):
 ```python
 fast = F.load_fgas_spk_from_compiled(
     data_dir=DATA_DIR,
-    suppression_path=Path(DATA_DIR) / "Ptot_Pdm_ratio_k_le15.npz",
+    suppression_path=Path(DATA_DIR) / f"Ptot_Pdm_ratio_snap{SNAPSHOT}.npz",
+    snapshot=SNAPSHOT,
     name_extra="_sixth_gen_makeMap",   # or whatever the files on disk are stamped
 )
 ```
@@ -83,12 +86,16 @@ Method: `to_training_arrays(k_target=None) -> (X, nd, y)`.
 
 | Function | What it does |
 | --- | --- |
-| `load_fgas_spk_dataset(base_path_template, suppression_path, ...)` | Build a dataset from raw per-simulation profile files; re-ranks halo columns by `rank_key` before the number-density cut. **Preferred for science.** |
-| `load_fgas_spk_from_compiled(data_dir, suppression_path, ...)` | Fast path: load pre-aggregated per-nd ratio files. Inherits whatever binning was frozen at production; cannot re-rank. |
+| `load_fgas_spk_dataset(base_path_template, suppression_path, snapshot, ...)` | Build a dataset from raw per-simulation profile files for a given snapshot; re-ranks halo columns by `rank_key` before the number-density cut. **Preferred for science.** |
+| `load_fgas_spk_from_compiled(data_dir, suppression_path, snapshot, ...)` | Fast path: load pre-aggregated per-nd ratio files for a given snapshot. Inherits whatever binning was frozen at production; cannot re-rank. |
 | `save_dataset(dataset, project_root, suite, snapshot, redshift, source, ...)` | Write a `.npz` (metadata embedded under `__meta__`) plus a human-readable `.yaml` sidecar. Refuses to overwrite by default. |
 | `load_dataset(npz_path)` | Reconstruct a `FgasSpkDataset` from a saved `.npz`. |
 | `dataset_dir(project_root, suite, snapshot, redshift, source)` | Canonical directory for a provenance bucket. |
 | `ensure_store_dirs(project_root, make_models=True)` | Create `datasets/` and `models/` in the scratch store. |
+
+Both loaders take a required `snapshot` argument (e.g. 74 → z=0.47, 82 → z=0.21),
+which threads into the on-disk filenames. Pass the matching
+`Ptot_Pdm_ratio_snap{NN}.npz` as `suppression_path`.
 
 ## Data store
 
@@ -127,9 +134,14 @@ same metadata in human-readable form.
   `SubhaloMStar`, so stellar-mass ranking (the observationally-matched choice)
   requires a catalogue re-read and currently raises. `halo_mass` (M_500c) is the
   working default.
-- **Provenance guard.** The loader requires the three-profile, `snap74` products
+- **Provenance guard.** The loader requires the three-profile products
   (it checks for `prof2_ionized_gas_*`). It deliberately fails on older
   generations rather than silently producing mislabelled output.
+- **Snapshots.** Data exists for snap74 (z=0.47, the DESI LRG bin-1 match) and
+  snap82 (z=0.21). The `snapshot` argument threads into every on-disk filename —
+  the per-sim profiles (`..._snap{NN}.npz`), the compiled ratio files
+  (`..._profiles_snap{NN}_nd_{i}_n_{N}.npz`), and the suppression file
+  (`Ptot_Pdm_ratio_snap{NN}.npz`). Pass a `suppression_path` that matches `snapshot`.
 - **Suppression target.** `SP(k)` here is `P_total / P_DM` computed *within* the
   hydro run (the DM component as a DMO proxy), **not** the paired-DMO
   `P_hydro / P_DMO`. This is a known approximation; it is small at low k but

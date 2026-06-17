@@ -66,19 +66,22 @@ maintained version of its loading logic.
 - **`rank_key="stellar"` is stubbed.** `SubhaloMStar` is not saved by the
   producer; stellar-mass ranking (the observationally-matched choice) needs a
   catalogue re-read and currently raises. Default is `halo_mass` (M_500c).
-- **Generation / provenance.** Source files must be the three-profile `snap74`
-  products (`_PROFILE_FILENAME`, with `prof2_ionized_gas_*`). The reference
-  notebook never executed its `NAME_EXTRA` cell, so older on-disk products may be
-  mis-stamped; the loader guards against this by requiring `prof2`. Do not relax
-  that guard.
+- **Generation / provenance.** Source files must be the three-profile products
+  (`prof2_ionized_gas_*` present). The reference notebook never executed its
+  `NAME_EXTRA` cell, so older on-disk products may be mis-stamped; the loader
+  guards against this by requiring `prof2`. Do not relax that guard.
 - **Suppression target is a proxy.** `suppression` is `P_total/P_DM` within the
   hydro run (DM-as-DMO proxy), not paired-DMO `P_hydro/P_DMO`. It is acceptable at
   low k but biases at k ≳ 5 h/Mpc in a feedback-correlated way. CAMELS provides
   matched N-body (`*_DM`) counterparts; computing the true target is a known
   to-do. Flag, don't silently "fix", and don't conflate the two in metadata.
-- **Filename coupling.** `_PROFILE_FILENAME` is pinned to the snapshot
-  (`..._snap74.npz`). Changing snapshot means changing this constant *and* the
-  `snapshot`/`redshift` arguments to `save_dataset`; keep them consistent.
+- **Snapshot handling.** Data spans snap74 (z=0.47) and snap82 (z=0.21). The
+  loaders take a required `snapshot` argument that threads into all on-disk
+  filenames: `_PROFILE_FILENAME_TEMPLATE` for per-sim profiles, the compiled
+  `..._profiles_snap{NN}_nd_{i}_n_{N}.npz` pattern, and the caller-supplied
+  `Ptot_Pdm_ratio_snap{NN}.npz`. Keep `snapshot` consistent with the
+  `suppression_path` and with `snapshot`/`redshift` in `save_dataset`; never
+  hardcode a snapshot back into a filename.
 
 ## Data store layout
 

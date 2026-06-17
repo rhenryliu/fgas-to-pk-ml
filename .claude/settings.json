@@ -1,0 +1,39 @@
+
+{
+  "permissions": {
+    "allow": [
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git status*)",
+      "Bash(git show*)",
+      "Bash(pytest*)",
+      "Bash(python -m pytest*)",
+      "Bash(python -c*)",
+      "Bash(black*)",
+      "Bash(flake8*)",
+      "Bash(ls*)",
+      "Bash(cat*)",
+      "Bash(head*)",
+      "Bash(tail*)",
+      "Bash(find*)",
+      "Bash(grep*)"
+    ],
+    "deny": [
+      "Bash(git push*)",
+      "Bash(git reset --hard*)",
+      "Bash(git rebase*)",
+      "Bash(git commit --amend*)",
+      "Bash(rm -rf*)",
+      "Bash(rm -r*)",
+      "Bash(sbatch*)",
+      "Bash(scancel*)",
+      "Write(data/*)",
+      "Write(*.fits)",
+      "Write(*.hdf5)",
+      "Write(*.h5)",
+      "Write(*.npy)",
+      "Write(*.npz)",
+      "Write(.env*)"
+    ]
+  }
+}

@@ -1,0 +1,37 @@
+#!/bin/bash
+# Run review with: REVIEW=1 git push
+if [ "${REVIEW}" != "1" ]; then
+    echo "Skipping Claude code review. Use REVIEW=1 git push to enable."
+    exit 0
+fi
+echo "================================================"
+echo "Claude Code Review"
+echo "================================================"
+while read local_ref local_sha remote_ref remote_sha; do
+    # Determine the diff range
+    if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+        if git rev-parse HEAD~1 >/dev/null 2>&1; then
+            RANGE="HEAD~1..HEAD"
+        else
+            # First commit — diff against empty tree
+            echo "First commit detected." >&2
+            RANGE="4b825dc642cb6eb9a060e54bf8d69288fbee4904..HEAD"
+        fi
+    else
+        RANGE="${remote_sha}..${local_sha}"
+    fi
+
+    # Skip this ref if diff is empty
+    if [ -z "$(git diff "$RANGE")" ]; then
+        echo "No changes detected for $local_ref, skipping."
+        continue
+    fi
+
+    # Run review via subagent, but don't block push if claude fails
+    claude -p "Use the pre-push-reviewer subagent to review the changes in the range ${RANGE}." \
+        || echo "Claude review failed, proceeding anyway."
+done
+echo "================================================"
+echo "Review complete. Proceeding with push."
+echo "================================================"
+exit 0

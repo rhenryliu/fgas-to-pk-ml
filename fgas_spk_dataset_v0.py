@@ -46,11 +46,8 @@ try:  # YAML is only needed for the human-readable sidecar manifest.
 except ImportError:  # pragma: no cover
     _HAS_YAML = False
 
-# Per-simulation profiles file written by the CAMELS producer. The snapshot
-# number is part of the filename (e.g. snap74 -> z=0.47, snap82 -> z=0.21).
-_PROFILE_FILENAME_TEMPLATE = (
-    "Profiles_tau-CAP_total-DSigma_ionized_gas-DSigma_snap{snapshot}.npz"
-)
+# Profiles file written per simulation by the CAMELS producer.
+_PROFILE_FILENAME = "Profiles_tau-CAP_total-DSigma_ionized_gas-DSigma_snap74.npz"
 
 # Projections stacked in the products.
 _PROJECTIONS = ("xy", "xz", "yz")
@@ -254,7 +251,6 @@ def _load_params(params_path: str | Path | None, sim_ids: Sequence[int]) -> np.n
 def load_fgas_spk_dataset(
     base_path_template: str,
     suppression_path: str | Path,
-    snapshot: int,
     number_densities: Sequence[float] = (1.0e-4, 2.8e-4, 5.0e-4, 1.0e-3, 2.4e-3),
     box_size_mpch: float = 50.0,
     sim_ids: Sequence[int] | None = None,
@@ -273,11 +269,8 @@ def load_fgas_spk_dataset(
         base_path_template (str): Template for each simulation's data directory,
             with a single ``{}`` placeholder for the simulation index, e.g.
             ``'/path/to/SB35_{}/data/'``. The profile filename is appended.
-        suppression_path (str | Path): Path to the ``Ptot_Pdm_ratio_snap{NN}.npz``
-            file holding keys ``'k'`` (n_k,, in h/Mpc) and ``'Ptot_Pdm_ratio'``
-            (n_sims, n_k). Must correspond to ``snapshot``.
-        snapshot (int): Snapshot number, threaded into the per-simulation profile
-            filename (e.g. 74 -> z=0.47, 82 -> z=0.21).
+        suppression_path (str | Path): Path to the ``Ptot_Pdm_ratio_*.npz`` file
+            holding keys ``'k'`` (n_k,) and ``'Ptot_Pdm_ratio'`` (n_sims, n_k).
         number_densities (Sequence[float], optional): Target number densities in
             (Mpc/h)^-3. Defaults to the five values used in the notebook.
         box_size_mpch (float, optional): Box side length in Mpc/h, used to turn
@@ -306,7 +299,6 @@ def load_fgas_spk_dataset(
     sim_ids = list(sim_ids)
 
     n_halos_per_nd = [int(nd * box_size_mpch**3) for nd in number_densities]
-    profile_filename = _PROFILE_FILENAME_TEMPLATE.format(snapshot=snapshot)
 
     fgas_rows: list[np.ndarray] = []
     fgas_std_rows: list[np.ndarray] = []
@@ -316,7 +308,7 @@ def load_fgas_spk_dataset(
     kept_suppression: list[np.ndarray] = []
 
     for i, sim_id in enumerate(sim_ids):
-        profile_path = Path(base_path_template.format(sim_id)) / profile_filename
+        profile_path = Path(base_path_template.format(sim_id)) / _PROFILE_FILENAME
         loaded = _load_one_simulation(profile_path, rank_key=rank_key)
 
         if radii_ref is None:
@@ -368,7 +360,6 @@ def load_fgas_spk_dataset(
 def load_fgas_spk_from_compiled(
     data_dir: str | Path,
     suppression_path: str | Path,
-    snapshot: int,
     number_densities: Sequence[float] = (1.0e-4, 2.8e-4, 5.0e-4, 1.0e-3, 2.4e-3),
     box_size_mpch: float = 50.0,
     name_extra: str = "_sixth_gen_makeMap",
@@ -377,10 +368,10 @@ def load_fgas_spk_from_compiled(
     """Fast path: load the pre-compiled per-nd ratio files instead of raw profiles.
 
     Reads the aggregated ``{name_extra}DeltaSigma_kSZ_over_DeltaSigma_total_
-    profiles_snap{NN}_nd_{i}_n_{N}.npz`` files written by the notebook (each
-    holding the per-simulation f_gas ratio of shape (n_sims, n_radii)) and stacks
-    them into the same :class:`FgasSpkDataset` layout. This is much faster than
-    re-reading 1024 raw profile files, at the cost of flexibility.
+    profiles_nd_{i}_n_{N}.npz`` files written by the notebook (each holding the
+    per-simulation f_gas ratio of shape (n_sims, n_radii)) and stacks them into
+    the same :class:`FgasSpkDataset` layout. This is much faster than re-reading
+    1024 raw profile files, at the cost of flexibility.
 
     Warning:
         This inherits whatever halo ranking was frozen when the compiled files
@@ -394,9 +385,7 @@ def load_fgas_spk_from_compiled(
     Args:
         data_dir (str | Path): Directory holding the compiled ``.npz`` files and
             the suppression file.
-        suppression_path (str | Path): Path to ``Ptot_Pdm_ratio_snap{NN}.npz``.
-        snapshot (int): Snapshot number, threaded into the compiled filenames
-            (e.g. 74 -> z=0.47, 82 -> z=0.21). Must correspond to the data.
+        suppression_path (str | Path): Path to ``Ptot_Pdm_ratio_*.npz``.
         number_densities (Sequence[float], optional): Target number densities in
             (Mpc/h)^-3. Defaults to the five notebook values.
         box_size_mpch (float, optional): Box side in Mpc/h, used only to rebuild
@@ -424,10 +413,7 @@ def load_fgas_spk_from_compiled(
     fgas_std_per_nd: list[np.ndarray] = []
     radii_ref: np.ndarray | None = None
     for nd_idx, n_halos in enumerate(n_halos_per_nd):
-        fname = (
-            f"{name_extra}DeltaSigma_kSZ_over_DeltaSigma_total_profiles"
-            f"_snap{snapshot}_nd_{nd_idx}_n_{n_halos}.npz"
-        )
+        fname = f"{name_extra}DeltaSigma_kSZ_over_DeltaSigma_total_profiles_nd_{nd_idx}_n_{n_halos}.npz"
         path = data_dir / fname
         if not path.exists():
             raise FileNotFoundError(
@@ -685,13 +671,11 @@ def _write_manifest(yaml_path: Path, meta: dict) -> None:
 if __name__ == "__main__":
     DATA_DIR = "/pscratch/sd/l/lindajin/DH_profile_kSZ_WL/data/"
     BASE = "/pscratch/sd/l/lindajin/CAMELS/IllustrisTNG/L50n512_SB35/SB35_{}/data/"
-    SNAPSHOT, REDSHIFT = 74, 0.47        # snap82 -> z=0.21
 
     # Correct (slower) path: rebuilds bins from raw per-halo data, fixing the sort.
     dataset = load_fgas_spk_dataset(
         base_path_template=BASE,
-        suppression_path=Path(DATA_DIR) / f"Ptot_Pdm_ratio_snap{SNAPSHOT}.npz",
-        snapshot=SNAPSHOT,
+        suppression_path=Path(DATA_DIR) / "Ptot_Pdm_ratio_k_le15.npz",
         rank_key="halo_mass",
         params_path=Path(DATA_DIR) / "camels_params_matrix.npy",
         progress=lambda i, n: print(f"\r{i}/{n}", end="", flush=True),
@@ -712,8 +696,8 @@ if __name__ == "__main__":
         dataset,
         project_root=PROJECT,
         suite="CAMELS-IllustrisTNG-L50n512-SB35",
-        snapshot=SNAPSHOT,
-        redshift=REDSHIFT,
+        snapshot=74,
+        redshift=0.47,
         source="lindajin",                 # switch to "rhliu" for self-generated runs
         provenance={
             "profiles_repo": "github.com/Klinjin/SimulationStacker (fork)",
@@ -730,7 +714,6 @@ if __name__ == "__main__":
     # Fast path: load the pre-compiled ratio files as-is (no re-ranking).
     # fast = load_fgas_spk_from_compiled(
     #     data_dir=DATA_DIR,
-    #     suppression_path=Path(DATA_DIR) / f"Ptot_Pdm_ratio_snap{SNAPSHOT}.npz",
-    #     snapshot=SNAPSHOT,
+    #     suppression_path=Path(DATA_DIR) / "Ptot_Pdm_ratio_k_le15.npz",
     #     name_extra="_sixth_gen_makeMap",
     # )
