@@ -21,7 +21,7 @@ installed package).
 | `src/fgas_spk_builder.py` | Builder: load profiles, fix the halo-ordering bug, assemble `(profile, nd) → SP(k)` arrays. Imports the contract from `fgas_spk_schema`. |
 | `src/fgas_spk_loader.py` | Configurable training-data loader: read a saved dataset and serve model-ready numpy arrays per a `DataConfig`. Importable by training scripts and runnable as a CLI dry-run. numpy + pyyaml only (no torch). |
 | `src/fgas_spk_dataset_v0.py` | Frozen pre-refactor backup of the loader. Do not extend; kept only because callers may still source it. |
-| `test_CAMELS_sixth_gen.ipynb` | Reference notebook (collaborator-authored) the loader was distilled from. Kept for provenance; not the source of truth. |
+| `notebooks/test_CAMELS_sixth_gen.ipynb` | Reference notebook (collaborator-authored) the loader was distilled from. Kept for provenance; not the source of truth. |
 
 Configs, figures, and documentation live **here**, in this git-tracked repo.
 Large data and model checkpoints live separately on scratch (see *Data store*).
@@ -43,7 +43,9 @@ The library itself (the `src/` modules) imports only:
 
 - Python ≥ 3.10
 - `numpy`
-- `pyyaml` (optional; without it the sidecar manifest is written as JSON instead)
+- `pyyaml` — optional for `fgas_spk_schema`/`fgas_spk_builder` (without it the
+  sidecar manifest is written as JSON instead), but **required** for
+  `fgas_spk_loader`, which reads and writes `DataConfig` YAML.
 
 The cosmology and ML dependencies (pyccl, colossus, SP(k)/BCemu, scikit-learn,
 torch/sbi, …) are **not** part of the library's import surface — they live in the
@@ -116,11 +118,12 @@ dataset = F.build_fgas_spk_dataset(
 )
 
 # Flatten to model-ready arrays. k_target picks SP(k) at one wavenumber;
-# omit it to keep the full S(k) curve as the target.
+# omit it to keep the full SP(k) curve as the target.
 X, nd, y = dataset.to_training_arrays(k_target=3.0)
 # X:  (n_examples, n_radii)   f_gas profiles
 # nd: (n_examples,)           number-density conditioning, (Mpc/h)^-3
-# y:  (n_examples,)           SP(k≈3 h/Mpc) per example
+# y:  (n_examples,)           SP(k≈3 h/Mpc) per example; omit k_target for the
+#                             full SP(k) curve, shape (n_examples, n_k)
 
 # Save into the scratch store under a consistent, self-describing name.
 PROJECT = "/pscratch/sd/r/rhliu/projects/fgas-to-pk-ml"
@@ -150,7 +153,9 @@ fast = F.build_fgas_spk_from_compiled(
 `FgasSpkDataset` — dataclass holding an assembled dataset:
 `radii_mpch (n_radii,)`, `number_densities (n_nd,)`, `fgas (n_sims, n_nd, n_radii)`,
 `fgas_std`, `k (n_k,)`, `suppression (n_sims, n_k)`, `sim_ids (n_sims,)`,
-`mean_halo_mass (n_sims, n_nd)`, `rank_key`, and optional `camels_params (n_sims, n_params)`.
+`mean_halo_mass (n_sims, n_nd)`, `rank_key`, optional `camels_params (n_sims, n_params)`,
+and optional `snapshot` (the snapshot the dataset was built for, e.g. 74 → z=0.47;
+populated by the loaders and carried through `save_dataset`/`load_dataset`).
 Method: `to_training_arrays(k_target=None) -> (X, nd, y)`.
 
 | Function | What it does |

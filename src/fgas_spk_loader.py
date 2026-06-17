@@ -42,7 +42,7 @@ Example config (YAML)::
     radial_range_mpch: [0.1, 2.0]             # null = full radial range
     include_nd_feature: true                  # append the number density
     include_mean_halo_mass: false             # append mean M_500c
-    include_camels_params: false              # append CAMELS params (off by default)
+    include_camels_params: true              # append CAMELS params (on by default)
 
     # Target:
     target_mode: curve        # one of: curve | single_k | k_range
@@ -136,7 +136,7 @@ class DataConfig:
     radial_range_mpch: tuple[float, float] | None = None
     include_nd_feature: bool = True
     include_mean_halo_mass: bool = False
-    include_camels_params: bool = False
+    include_camels_params: bool = True
 
     # --- target ---
     target_mode: str = "curve"

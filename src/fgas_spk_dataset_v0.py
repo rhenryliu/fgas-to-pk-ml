@@ -2,8 +2,10 @@
 
 This module is a frozen, pre-refactor backup of the data-loading code, retained
 only because callers may still source it. Do not extend or fix it here; the
-canonical, maintained module is ``fgas_spk_dataset.py``. Note in particular that
-this version's ``__main__`` uses the old suppression naming
+canonical, maintained code is split across ``fgas_spk_schema.py`` (the on-disk
+contract), ``fgas_spk_builder.py`` (the builder), and ``fgas_spk_loader.py``
+(the training-data loader). Note in particular that this version's ``__main__``
+uses the old suppression naming
 (``Ptot_Pdm_ratio_k_le15.npz``) and lacks the snapshot/suppression cross-check
 and the ``snapshot`` field carried by the canonical module.
 

@@ -12,12 +12,27 @@ using the CAMELS IllustrisTNG **SB35** suite. It consumes the per-simulation
 profile products written by `SimulationStacker` and produces model-ready
 training data.
 
-Current contents: `fgas_spk_builder.py` (the library) and a copy of the
-collaborator-authored reference notebook `test_CAMELS_sixth_gen.ipynb`. The
-notebook is provenance, not the source of truth — the library is the corrected,
-maintained version of its loading logic. `fgas_spk_dataset_v0.py` is a **frozen,
-pre-refactor backup** of the loader, kept only because callers may still source
-it; do not extend or fix it — all changes go to `fgas_spk_builder.py`.
+Current contents (all under `src/`, as loose top-level modules, not an installed
+package):
+
+- `fgas_spk_schema.py` — the on-disk data contract and **single source of
+  truth**: the `FgasSpkDataset` container, the filename/directory convention,
+  `save_dataset`/`load_dataset`/`resolve_dataset_path`/`dataset_dir`/
+  `ensure_store_dirs`, and `SCHEMA_VERSION`. Do not redefine the contract
+  elsewhere.
+- `fgas_spk_builder.py` — the builder: load profiles, fix the halo-ordering bug,
+  assemble `(profile, nd) → SP(k)` arrays. Imports and re-exports the contract
+  from `fgas_spk_schema`.
+- `fgas_spk_loader.py` — the configurable training-data loader: read a saved
+  dataset and serve model-ready numpy arrays per a `DataConfig`. numpy + pyyaml
+  only (no torch); runnable as a CLI dry-run.
+- `fgas_spk_dataset_v0.py` — a **frozen, pre-refactor backup** of the loader,
+  kept only because callers may still source it; do not extend or fix it — all
+  changes go to the three maintained modules above.
+
+A copy of the collaborator-authored reference notebook lives at
+`notebooks/test_CAMELS_sixth_gen.ipynb`. It is provenance, not the source of
+truth — the library is the corrected, maintained version of its loading logic.
 
 ## How to work here
 
@@ -25,8 +40,10 @@ it; do not extend or fix it — all changes go to `fgas_spk_builder.py`.
   followed by an explicit numerical check (shapes, round-trips, value ranges)
   over large one-shot rewrites. Add a check that proves the change before moving on.
 - **Conventions.** Google-style docstrings. Canadian English in prose and
-  comments. Type hints on public functions. Single-module layout for now; if it
-  grows into a package, use a `src/` layout.
+  comments. Type hints on public functions. Modules live under `src/` as loose
+  top-level modules (`schema` holds the contract; `builder` and `loader` import
+  from it); if this grows further, promote `src/` to an installed package rather
+  than adding cross-imports between flat modules.
 - **Units and constants.** Public data uses comoving **Mpc/h** for radii, **h/Mpc**
   for `k`, **M⊙/h** for masses; `fgas`/`suppression` are dimensionless. CAMELS
   cosmology varies per simulation (Sobol set) — never assume one cosmology for

@@ -1,0 +1,36 @@
+# Example DataConfig for fgas_spk_loader, populated with the loader's current
+# defaults. Run a dry-run with:
+#
+#     python src/fgas_spk_loader.py --config config.yaml
+#
+# Dataset selection: give EITHER the store fields below (resolved via
+# resolve_dataset_path, so you never type the path beyond project_root) OR a
+# single explicit `path:` to a saved .npz -- not both.
+
+# --- Option A: resolve from store fields ---
+# project_root: /pscratch/sd/r/rhliu/projects/fgas-to-pk-ml
+project_root: ./
+suite: CAMELS-IllustrisTNG-L50n512-SB35
+snapshot: 74
+redshift: 0.47
+source: lindajin
+rank: m500            # on-disk rank token (m500 / mstar / frozen)
+tag: latest          # or an explicit tag like 20260617 / v1 (preferred for reproducibility)
+
+# --- Option B: instead of the seven fields above, give an explicit file ---
+# path: /pscratch/.../fgas_spk__...__v1.npz
+
+# --- Simulation subset (by simulation id; null = all, in stored order) ---
+sim_ids: null
+
+# --- Inputs / features ---
+number_density_indices: null   # null = all five number densities
+radial_range_mpch: null        # null = full radial range; e.g. [0.1, 2.0] to crop (Mpc/h)
+include_nd_feature: true       # append the number density as a feature column
+include_mean_halo_mass: false  # append the stack's mean M_500c [M_sun/h]
+include_camels_params: false   # append CAMELS params (requires the dataset to carry them)
+
+# --- Target ---
+target_mode: curve   # one of: curve | single_k | k_range
+k_target: null       # required for single_k (nearest-k bin), in h/Mpc
+k_range: null        # required for k_range, e.g. [0.5, 5.0] (inclusive), in h/Mpc
