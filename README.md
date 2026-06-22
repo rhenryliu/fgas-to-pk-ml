@@ -76,6 +76,12 @@ that installs matched package versions on both target platforms — NERSC Perlmu
 (3.11 also works; numpy 2.4 sets the ≥3.11 floor). Almost everything installs from
 pre-built wheels; the one compile-from-source exception is noted below.
 
+**Per-machine roots.** `fgas_spk.paths` resolves where data is read and written:
+export `$FGAS_SCRATCH_ROOT` once per machine for run outputs (writes raise a clear
+error if it is unset — the code never guesses a writable location), and optionally
+`$FGAS_DATA_ROOT` for reads (it defaults to the repo, since the datasets are
+git-tracked).
+
 Two ways to create it:
 
 ```bash
