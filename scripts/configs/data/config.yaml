@@ -1,7 +1,7 @@
-# Example DataConfig for fgas_spk_loader, populated with the loader's current
+# Example DataConfig for fgas_spk.loader, populated with the loader's current
 # defaults. Run a dry-run with:
 #
-#     python src/fgas_spk_loader.py --config config.yaml
+#     python -m fgas_spk.loader --config scripts/configs/data/config.yaml
 #
 # Dataset selection: give EITHER the store fields below (resolved via
 # resolve_dataset_path, so you never type the path beyond project_root) OR a

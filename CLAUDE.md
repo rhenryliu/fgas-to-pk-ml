@@ -12,23 +12,27 @@ using the CAMELS IllustrisTNG **SB35** suite. It consumes the per-simulation
 profile products written by `SimulationStacker` and produces model-ready
 training data.
 
-Current contents (all under `src/`, as loose top-level modules, not an installed
-package):
+The library is the installed `fgas_spk` package (distribution name
+`fgas-to-pk-ml`, src layout under `src/`, `pip install -e .`). Its modules:
 
-- `fgas_spk_schema.py` — the on-disk data contract and **single source of
+- `src/fgas_spk/schema.py` — the on-disk data contract and **single source of
   truth**: the `FgasSpkDataset` container, the filename/directory convention,
   `save_dataset`/`load_dataset`/`resolve_dataset_path`/`dataset_dir`/
   `ensure_store_dirs`, and `SCHEMA_VERSION`. Do not redefine the contract
   elsewhere.
-- `fgas_spk_builder.py` — the builder: load profiles, fix the halo-ordering bug,
-  assemble `(profile, nd) → SP(k)` arrays. Imports and re-exports the contract
-  from `fgas_spk_schema`.
-- `fgas_spk_loader.py` — the configurable training-data loader: read a saved
+- `src/fgas_spk/builder.py` — the builder: load profiles, fix the halo-ordering
+  bug, assemble `(profile, nd) → SP(k)` arrays. Imports and re-exports the
+  contract from `fgas_spk.schema`.
+- `src/fgas_spk/loader.py` — the configurable training-data loader: read a saved
   dataset and serve model-ready numpy arrays per a `DataConfig`. numpy + pyyaml
-  only (no torch); runnable as a CLI dry-run.
-- `fgas_spk_dataset_v0.py` — a **frozen, pre-refactor backup** of the loader,
-  kept only because callers may still source it; do not extend or fix it — all
-  changes go to the three maintained modules above.
+  only (no torch); runnable as a CLI dry-run (`python -m fgas_spk.loader`).
+- `src/fgas_spk/__init__.py` — re-exports the common API as a flat `fgas_spk.*`
+  surface (the schema names, the builders, and the loader's `DataConfig` /
+  `load_training_data`).
+- `src/_frozen/fgas_spk_dataset_v0.py` — a **frozen, pre-refactor backup** of the
+  loader, quarantined outside the package (no `__init__.py`), kept only because
+  callers may still source it; do not extend or fix it — all changes go to the
+  three maintained modules above.
 
 A copy of the collaborator-authored reference notebook lives at
 `notebooks/test_CAMELS_sixth_gen.ipynb`. It is provenance, not the source of
@@ -40,10 +44,11 @@ truth — the library is the corrected, maintained version of its loading logic.
   followed by an explicit numerical check (shapes, round-trips, value ranges)
   over large one-shot rewrites. Add a check that proves the change before moving on.
 - **Conventions.** Google-style docstrings. Canadian English in prose and
-  comments. Type hints on public functions. Modules live under `src/` as loose
-  top-level modules (`schema` holds the contract; `builder` and `loader` import
-  from it); if this grows further, promote `src/` to an installed package rather
-  than adding cross-imports between flat modules.
+  comments. Type hints on public functions. The code is the installed `fgas_spk`
+  package under `src/` (`schema` holds the contract; `builder` and `loader`
+  import from it via absolute intra-package imports — `from fgas_spk.schema
+  import ...`). Keep the dependency direction one-way (loader/builder → schema);
+  do not add back-imports from `schema` to its consumers.
 - **Units and constants.** Public data uses comoving **Mpc/h** for radii, **h/Mpc**
   for `k`, **M⊙/h** for masses; `fgas`/`suppression` are dimensionless. CAMELS
   cosmology varies per simulation (Sobol set) — never assume one cosmology for

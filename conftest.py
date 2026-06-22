@@ -1,11 +1,13 @@
-"""Pytest configuration: put the ``src/`` module directory on ``sys.path``.
+"""Pytest configuration: keep the ``src/`` directory on ``sys.path``.
 
-The library modules live in ``src/`` (``fgas_spk_schema``, ``fgas_spk_builder``,
-``fgas_spk_loader``) as loose top-level modules -- not an installed package.
-Prepending ``src/`` here lets the tests import them by name regardless of
-pytest's import mode, with no editable install required. Running the loader CLI
-directly (``python src/fgas_spk_loader.py``) works without this shim, because
-Python already puts the script's own directory on ``sys.path``.
+The library is now the installed ``fgas_spk`` package (``pip install -e .``),
+so the tests import it as ``fgas_spk.schema`` / ``fgas_spk.builder`` /
+``fgas_spk.loader``. This shim is no longer required for that -- it is kept for
+two reasons: tests still run if the editable install is momentarily absent
+(``src/`` on the path makes ``import fgas_spk`` resolve to ``src/fgas_spk/``),
+and it keeps the quarantined frozen backup sourceable via
+``import _frozen.fgas_spk_dataset_v0`` (``src/_frozen/`` carries no
+``__init__.py`` and is deliberately outside the package).
 """
 
 import sys

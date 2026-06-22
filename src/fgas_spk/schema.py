@@ -3,7 +3,7 @@
 This module is the **single source of truth** for the dataset schema: the
 :class:`FgasSpkDataset` container, the filename/directory convention, the
 save/load round-trip, and the schema version. The builder
-(:mod:`fgas_spk_builder`) and the training-data loader (:mod:`fgas_spk_loader`)
+(:mod:`fgas_spk.builder`) and the training-data loader (:mod:`fgas_spk.loader`)
 both import from here; neither redefines the contract.
 
 Keeping the contract in one place means the on-disk format has exactly one
@@ -104,7 +104,7 @@ class FgasSpkDataset:
             no radial crop, no ``k`` targeting beyond a single bin, and no
             ``X_cond``/``X_params`` modality split. For real training work, save
             the dataset with :func:`save_dataset` and load it through
-            :mod:`fgas_spk_loader` (``load_training_data``), which is the
+            :mod:`fgas_spk.loader` (``load_training_data``), which is the
             configurable, reproducible path. Calling this method emits a
             ``UserWarning`` to that effect; silence it with
             :func:`warnings.filterwarnings` if the shortcut is what you want.
@@ -127,7 +127,7 @@ class FgasSpkDataset:
             "FgasSpkDataset.to_training_arrays is an in-memory convenience, not "
             "the training entry point: it has no subsetting, radial crop, or "
             "X_cond/X_params modality split. For training, save the dataset and "
-            "load it via fgas_spk_loader.load_training_data. Silence this with "
+            "load it via fgas_spk.loader.load_training_data. Silence this with "
             "warnings.filterwarnings if the shortcut is intended.",
             UserWarning,
             stacklevel=2,

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fgas-to-pk-ml"
+version = "0.1.0"
+description = "Assemble f_gas(R) to SP(k) training data from CAMELS stacking products."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Henry Liu", email = "henryl1998@gmail.com" }]
+license = { text = "MIT" }
+
+# The library's import surface is numpy + pyyaml only (see README / CLAUDE.md).
+# These are deliberately unpinned floors: the exact, cross-platform pins live in
+# requirements.txt / environment.yml, and the cosmology/ML stack (pyccl,
+# colossus, torch, ...) belongs to those env files, not to the package metadata.
+dependencies = ["numpy", "pyyaml"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["fgas_spk*"]

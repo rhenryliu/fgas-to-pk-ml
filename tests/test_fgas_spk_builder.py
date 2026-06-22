@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import fgas_spk_builder as m
+import fgas_spk.builder as m
 
 
 # --- builders --------------------------------------------------------------

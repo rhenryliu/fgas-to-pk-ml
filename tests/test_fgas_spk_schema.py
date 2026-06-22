@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import fgas_spk_schema as S
+import fgas_spk.schema as S
 
 
 # --- builders --------------------------------------------------------------

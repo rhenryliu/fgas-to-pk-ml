@@ -218,3 +218,6 @@ __marimo__/
 .streamlit/secrets.toml
 
 .vscode/
+
+# Generated figures (kept out of the git-tracked repo)
+figures/

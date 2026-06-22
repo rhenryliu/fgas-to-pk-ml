@@ -1,14 +1,14 @@
-"""Demo: load f_gas(R) to SP(k) training data via :mod:`fgas_spk_loader`.
+"""Demo: load f_gas(R) to SP(k) training data via :mod:`fgas_spk.loader`.
 
 This is a runnable usage example for the configurable training-data loader. It
-resolves a saved :class:`~fgas_spk_schema.FgasSpkDataset`, builds model-ready
-numpy arrays through :func:`fgas_spk_loader.load_training_data`, prints the
+resolves a saved :class:`~fgas_spk.schema.FgasSpkDataset`, builds model-ready
+numpy arrays through :func:`fgas_spk.loader.load_training_data`, prints the
 loader's dry-run summary, and then shows how to access the resulting
-:class:`~fgas_spk_loader.TrainingData` modalities. It is read-only: no
+:class:`~fgas_spk.loader.TrainingData` modalities. It is read-only: no
 preprocessing, no training, no side effects.
 
-By default it reads the bundled config at ``scripts/configs/config.yaml``; pass
-``--config`` to point at another YAML.
+By default it reads the bundled config at ``scripts/configs/data/config.yaml``;
+pass ``--config`` to point at another YAML.
 
 Run from the repository root::
 
@@ -24,21 +24,14 @@ the current working directory -- run from the repo root in that case.
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 import numpy as np
 
-# `src/` holds loose top-level modules (no installed package), so put it on the
-# path relative to this file -- works regardless of the current directory.
-_SRC_DIR = Path(__file__).resolve().parent.parent / "src"
-if str(_SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(_SRC_DIR))
-
-import fgas_spk_loader as L  # noqa: E402  (import after sys.path bootstrap)
+from fgas_spk import loader as L
 
 # Default config shipped alongside this demo.
-_DEFAULT_CONFIG = Path(__file__).resolve().parent / "configs" / "config.yaml"
+_DEFAULT_CONFIG = Path(__file__).resolve().parent / "configs" / "data" / "config.yaml"
 
 
 def _describe_array(name: str, arr: np.ndarray | None) -> str:
@@ -110,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
     """
     parser = argparse.ArgumentParser(
         description="Demo loader for f_gas->SP(k) training data. Loads via "
-        "fgas_spk_loader, prints a summary and a field-access example. "
+        "fgas_spk.loader, prints a summary and a field-access example. "
         "Read-only: no training, no side effects."
     )
     parser.add_argument(

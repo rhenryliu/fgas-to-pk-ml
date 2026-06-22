@@ -12,8 +12,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import fgas_spk_loader as L
-import fgas_spk_schema as S
+import fgas_spk.loader as L
+import fgas_spk.schema as S
 
 # The five fixed number densities for the suite (n = int(nd * 50**3)).
 NUMBER_DENSITIES = [1.0e-4, 2.8e-4, 5.0e-4, 1.0e-3, 2.4e-3]
@@ -61,8 +61,12 @@ def _save(tmp_path, with_params: bool = True, tag: str = "v1") -> Path:
 
 def test_curve_mode_shapes(tmp_path):
     td = L.load_training_data(L.DataConfig(path=str(_save(tmp_path))))
-    # 3 sims x 5 nds = 15 rows; 6 radii + 1 nd feature = 7 features; full 8 k.
-    assert td.X.shape == (15, 7)
+    # 3 sims x 5 nds = 15 rows. Inputs are split by modality: X is the profile
+    # alone (6 radii), nd goes to X_cond (1 col), CAMELS params to X_params (4);
+    # full 8 k in the curve target.
+    assert td.X.shape == (15, 6)
+    assert td.X_cond.shape == (15, 1)
+    assert td.X_params.shape == (15, 4)
     assert td.y.shape == (15, 8)
     assert td.nd.shape == (15,)
     assert td.sim_index.shape == (15,)
@@ -107,8 +111,9 @@ def test_radial_range_crop(tmp_path):
     cfg = L.DataConfig(path=str(_save(tmp_path)), radial_range_mpch=(lo, hi))
     td = L.load_training_data(cfg)
     assert td.radii_mpch.shape == (expected,)
-    # X = cropped profile (expected cols) + 1 nd feature.
-    assert td.X.shape[1] == expected + 1
+    # X is the cropped profile alone; the nd conditioning feature lives in X_cond.
+    assert td.X.shape[1] == expected
+    assert td.X_cond.shape[1] == 1
     assert td.radii_mpch.min() >= lo and td.radii_mpch.max() <= hi
 
 
@@ -124,19 +129,26 @@ def test_sim_id_subset(tmp_path):
 def test_feature_flags_change_width(tmp_path):
     npz = str(_save(tmp_path, with_params=True))
     n_radii, n_params = 6, 4
-    # No nd feature -> just the profile.
-    td0 = L.load_training_data(L.DataConfig(path=npz, include_nd_feature=False))
+    # X is always the profile alone; the feature flags resize X_cond / X_params,
+    # never X. No conditioning, no params.
+    td0 = L.load_training_data(L.DataConfig(
+        path=npz, include_nd_feature=False, include_camels_params=False))
     assert td0.X.shape[1] == n_radii
-    # nd only (default).
+    assert td0.X_cond is None
+    assert td0.X_params is None
+    # nd only in X_cond (default); CAMELS params on by default in X_params.
     td1 = L.load_training_data(L.DataConfig(path=npz))
-    assert td1.X.shape[1] == n_radii + 1
-    # nd + mean halo mass.
+    assert td1.X.shape[1] == n_radii
+    assert td1.X_cond.shape[1] == 1                    # nd
+    assert td1.X_params.shape[1] == n_params
+    # nd + mean halo mass in X_cond.
     td2 = L.load_training_data(L.DataConfig(path=npz, include_mean_halo_mass=True))
-    assert td2.X.shape[1] == n_radii + 2
-    # nd + mhm + camels params.
-    td3 = L.load_training_data(L.DataConfig(
-        path=npz, include_mean_halo_mass=True, include_camels_params=True))
-    assert td3.X.shape[1] == n_radii + 2 + n_params
+    assert td2.X.shape[1] == n_radii
+    assert td2.X_cond.shape[1] == 2                    # nd, mean halo mass
+    # CAMELS params can be turned off -> X_params is None.
+    td3 = L.load_training_data(L.DataConfig(path=npz, include_camels_params=False))
+    assert td3.X.shape[1] == n_radii
+    assert td3.X_params is None
 
 
 def test_camels_params_requested_but_absent_raises(tmp_path):
@@ -148,8 +160,9 @@ def test_camels_params_requested_but_absent_raises(tmp_path):
 def test_mean_halo_mass_feature_value(tmp_path):
     npz = str(_save(tmp_path))
     td = L.load_training_data(L.DataConfig(path=npz, include_mean_halo_mass=True))
-    # Last column is the mean halo mass (constant 1e13 in the fixture).
-    np.testing.assert_allclose(td.X[:, -1], 1e13)
+    # X_cond columns are (nd, mean halo mass); the last is the mean halo mass
+    # (constant 1e13 in the fixture).
+    np.testing.assert_allclose(td.X_cond[:, -1], 1e13)
 
 
 # --- row-for-row alignment -------------------------------------------------
@@ -157,18 +170,19 @@ def test_mean_halo_mass_feature_value(tmp_path):
 def test_sim_index_and_nd_align_with_X_and_y(tmp_path):
     """For every row, the profile and target must match its (sim, nd) labels."""
     ds = _make_dataset(with_params=False)
-    td = L.load_training_data(L.DataConfig(path=str(_save(tmp_path, with_params=False))))
+    td = L.load_training_data(L.DataConfig(
+        path=str(_save(tmp_path, with_params=False)), include_camels_params=False))
     sim_ids = list(ds.sim_ids)
     nds = list(ds.number_densities)
     for row in range(td.X.shape[0]):
         p = sim_ids.index(int(td.sim_index[row]))      # sim position
         j = int(np.argmin(np.abs(np.array(nds) - td.nd[row])))  # nd position
-        # Profile columns (before the appended nd feature) match fgas[p, j].
-        np.testing.assert_allclose(td.X[row, :ds.fgas.shape[2]], ds.fgas[p, j])
+        # X is the profile alone and matches fgas[p, j].
+        np.testing.assert_allclose(td.X[row], ds.fgas[p, j])
         # Curve target matches that simulation's suppression row.
         np.testing.assert_allclose(td.y[row], ds.suppression[p])
-        # The appended nd feature equals the row's nd value.
-        np.testing.assert_allclose(td.X[row, ds.fgas.shape[2]], td.nd[row])
+        # The nd conditioning scalar (X_cond column 0) equals the row's nd value.
+        np.testing.assert_allclose(td.X_cond[row, 0], td.nd[row])
 
 
 def test_row_order_is_sim_major(tmp_path):
@@ -188,7 +202,7 @@ def test_resolve_via_store_fields_and_latest(tmp_path):
     )
     td = L.load_training_data(cfg)
     assert td.source_path.endswith("__v1.npz")
-    assert td.X.shape == (15, 7)
+    assert td.X.shape == (15, 6)
 
 
 def test_both_selection_modes_raises(tmp_path):
@@ -233,7 +247,8 @@ def test_single_k_empty_k_raises(tmp_path):
         ds, project_root=tmp_path, suite="TEST",
         snapshot=74, redshift=0.47, source="rhliu", tag="vk0",
     )
-    cfg = L.DataConfig(path=str(out), target_mode="single_k", k_target=1.0)
+    cfg = L.DataConfig(path=str(out), target_mode="single_k", k_target=1.0,
+                       include_camels_params=False)
     with pytest.raises(ValueError, match="no k bins"):
         L.load_training_data(cfg)
 
@@ -257,11 +272,13 @@ def test_config_yaml_round_trip(tmp_path):
 # --- CLI dry-run -----------------------------------------------------------
 
 def test_summarize_handles_missing_config():
-    # A hand-built TrainingData with config=None must not crash _summarize.
+    # A hand-built TrainingData with config=None (and no X_cond / X_params)
+    # must not crash _summarize.
     td = L.TrainingData(
-        X=np.zeros((2, 3)), y=np.zeros((2, 4)), nd=np.array([1.0e-4, 1.0e-4]),
-        sim_index=np.array([1, 1]), k=np.linspace(0.1, 1.0, 4),
-        radii_mpch=np.linspace(0.1, 1.0, 3), source_path="x.npz",
+        X=np.zeros((2, 3)), X_cond=None, X_params=None, y=np.zeros((2, 4)),
+        nd=np.array([1.0e-4, 1.0e-4]), sim_index=np.array([1, 1]),
+        k=np.linspace(0.1, 1.0, 4), radii_mpch=np.linspace(0.1, 1.0, 3),
+        source_path="x.npz",
     )
     assert "target_mode=?" in L._summarize(td)
 

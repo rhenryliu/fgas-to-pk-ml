@@ -1,7 +1,7 @@
 """Configurable training-data loader for f_gas(R) to SP(k) models.
 
-This module turns a saved :class:`~fgas_spk_schema.FgasSpkDataset` (written by
-:mod:`fgas_spk_builder` via :mod:`fgas_spk_schema`) into model-ready numpy
+This module turns a saved :class:`~fgas_spk.schema.FgasSpkDataset` (written by
+:mod:`fgas_spk.builder` via :mod:`fgas_spk.schema`) into model-ready numpy
 arrays, according to a :class:`DataConfig`. It is importable by future training
 scripts and runnable as a CLI dry-run.
 
@@ -53,7 +53,7 @@ Example config (YAML)::
 
 CLI::
 
-    python src/fgas_spk_loader.py --config config.yaml
+    python -m fgas_spk.loader --config scripts/configs/data/config.yaml
 
 prints a summary (resolved path, ``X``/``X_cond``/``X_params``/``y`` shapes,
 number-density values, target mode, n_sims) and exits. It loads but does not
@@ -70,7 +70,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from fgas_spk_schema import FgasSpkDataset, load_dataset, resolve_dataset_path
+from fgas_spk.schema import FgasSpkDataset, load_dataset, resolve_dataset_path
 
 _TARGET_MODES = ("curve", "single_k", "k_range")
 
@@ -82,7 +82,7 @@ class DataConfig:
     Exactly one selection mode must be given: either an explicit ``path`` to a
     saved ``.npz``, or the seven store fields (``project_root``, ``suite``,
     ``snapshot``, ``redshift``, ``source``, ``rank``, ``tag``) that are resolved
-    via :func:`~fgas_spk_schema.resolve_dataset_path`. The store-field route
+    via :func:`~fgas_spk.schema.resolve_dataset_path`. The store-field route
     means a caller never types the path beyond ``project_root``; ``tag`` may be
     ``"latest"`` to auto-select the newest (see ``resolve_dataset_path``).
 

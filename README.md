@@ -12,40 +12,57 @@ products written by `SimulationStacker` and turns them into model-ready arrays.
 
 ## Contents
 
-The library modules live under `src/` as loose top-level modules (not an
-installed package).
+The library is the installed `fgas_spk` package (distribution name
+`fgas-to-pk-ml`), laid out under `src/` and installed editable with
+`pip install -e .`.
 
 | File | Purpose |
 | --- | --- |
-| `src/fgas_spk_schema.py` | **The on-disk data contract** — single source of truth: the `FgasSpkDataset` container, the filename/directory convention, `save_dataset`/`load_dataset`/`resolve_dataset_path`, and `SCHEMA_VERSION`. |
-| `src/fgas_spk_builder.py` | Builder: load profiles, fix the halo-ordering bug, assemble `(profile, nd) → SP(k)` arrays. Imports the contract from `fgas_spk_schema`. |
-| `src/fgas_spk_loader.py` | Configurable training-data loader: read a saved dataset and serve model-ready numpy arrays per a `DataConfig`. Importable by training scripts and runnable as a CLI dry-run. numpy + pyyaml only (no torch). |
-| `src/fgas_spk_dataset_v0.py` | Frozen pre-refactor backup of the loader. Do not extend; kept only because callers may still source it. |
+| `src/fgas_spk/schema.py` | **The on-disk data contract** — single source of truth: the `FgasSpkDataset` container, the filename/directory convention, `save_dataset`/`load_dataset`/`resolve_dataset_path`, and `SCHEMA_VERSION`. |
+| `src/fgas_spk/builder.py` | Builder: load profiles, fix the halo-ordering bug, assemble `(profile, nd) → SP(k)` arrays. Imports the contract from `fgas_spk.schema`. |
+| `src/fgas_spk/loader.py` | Configurable training-data loader: read a saved dataset and serve model-ready numpy arrays per a `DataConfig`. Importable by training scripts and runnable as a CLI dry-run. numpy + pyyaml only (no torch). |
+| `src/fgas_spk/__init__.py` | Package init: re-exports the common API (`FgasSpkDataset`, `save_dataset`/`load_dataset`, `build_fgas_spk_dataset`, `DataConfig`/`load_training_data`, …) as a flat `fgas_spk.*` surface. |
+| `src/_frozen/fgas_spk_dataset_v0.py` | Frozen pre-refactor backup of the loader, quarantined outside the package (no `__init__.py`). Do not extend; kept only because callers may still source it. |
 | `notebooks/test_CAMELS_sixth_gen.ipynb` | Reference notebook (collaborator-authored) the loader was distilled from. Kept for provenance; not the source of truth. |
 
 Configs, figures, and documentation live **here**, in this git-tracked repo.
 Large data and model checkpoints live separately on scratch (see *Data store*).
 
-### Importing
+### Installing and importing
 
-The modules are imported by their flat names (`import fgas_spk_builder`,
-`import fgas_spk_schema`, `import fgas_spk_loader`), so `src/` must be on
-`sys.path`:
+Install the package editable once per environment (see *Environment* below for
+the full pinned dependency set):
 
-- **Tests** get it automatically via the root `conftest.py`.
-- **Scripts** can either run a module directly — `python src/fgas_spk_loader.py
-  --config config.yaml` puts `src/` on the path for free — or set
-  `PYTHONPATH=src` (e.g. `PYTHONPATH=src python my_train.py`).
+```bash
+pip install -e .
+```
+
+Then import it as the `fgas_spk` package from anywhere — no `sys.path` shimming:
+
+```python
+import fgas_spk as F                            # flat API: F.build_fgas_spk_dataset, F.save_dataset, ...
+from fgas_spk import schema, builder, loader    # or reach into the submodules
+```
+
+- **Tests** import `fgas_spk.*`; the root `conftest.py` also keeps `src/` on
+  `sys.path`, so they run even before the editable install and the frozen
+  backup under `src/_frozen/` stays sourceable.
+- **The loader CLI** runs as a module: `python -m fgas_spk.loader --config
+  scripts/configs/data/config.yaml`.
 
 ## Requirements
 
-The library itself (the `src/` modules) imports only:
+The library itself (the `fgas_spk` package) imports only:
 
 - Python ≥ 3.10
 - `numpy`
-- `pyyaml` — optional for `fgas_spk_schema`/`fgas_spk_builder` (without it the
+- `pyyaml` — optional for `fgas_spk.schema`/`fgas_spk.builder` (without it the
   sidecar manifest is written as JSON instead), but **required** for
-  `fgas_spk_loader`, which reads and writes `DataConfig` YAML.
+  `fgas_spk.loader`, which reads and writes `DataConfig` YAML.
+
+These two are the package's declared runtime dependencies in `pyproject.toml`
+(unpinned floors); the exact, cross-platform pins live in `requirements.txt` /
+`environment.yml`.
 
 The cosmology and ML dependencies (pyccl, colossus, SP(k)/BCemu, scikit-learn,
 torch/sbi, …) are **not** part of the library's import surface — they live in the
@@ -117,7 +134,7 @@ relying on these top-level pins.
 
 ```python
 from pathlib import Path
-import fgas_spk_builder as F
+import fgas_spk as F
 
 DATA_DIR = "/pscratch/sd/l/lindajin/DH_profile_kSZ_WL/data/"
 BASE = "/pscratch/sd/l/lindajin/CAMELS/IllustrisTNG/L50n512_SB35/SB35_{}/data/"
@@ -185,22 +202,23 @@ Method: `to_training_arrays(k_target=None) -> (X, nd, y)`.
 | `ensure_store_dirs(project_root, make_models=True)` | Create `datasets/` and `models/` in the scratch store. |
 
 `save_dataset`, `load_dataset`, `dataset_dir`, `resolve_dataset_path`,
-`ensure_store_dirs`, and `FgasSpkDataset` are defined in `fgas_spk_schema` and
-re-exported from `fgas_spk_builder` for convenience.
+`ensure_store_dirs`, and `FgasSpkDataset` are defined in `fgas_spk.schema`,
+re-exported from `fgas_spk.builder` for backward compatibility, and also exposed
+on the top-level `fgas_spk` flat API.
 
 Both builders take a required `snapshot` argument (e.g. 74 → z=0.47, 82 → z=0.21),
 which threads into the on-disk filenames. Pass the matching
 `Ptot_Pdm_ratio_snap{NN}.npz` as `suppression_path`.
 
-### Training-data loader (`fgas_spk_loader`)
+### Training-data loader (`fgas_spk.loader`)
 
-`fgas_spk_loader` reads a saved dataset (via `fgas_spk_schema`) and serves
+`fgas_spk.loader` reads a saved dataset (via `fgas_spk.schema`) and serves
 model-ready numpy arrays per a `DataConfig`. It does **no** preprocessing,
 normalisation, or splitting — those belong to the training script — and never
 imports a deep-learning framework.
 
 ```python
-import fgas_spk_loader as L
+from fgas_spk import loader as L
 
 cfg = L.DataConfig(
     project_root=PROJECT, suite="CAMELS-IllustrisTNG-L50n512-SB35",
@@ -235,10 +253,10 @@ simulation** (splitting by row would leak a simulation's shared `SP(k)` target
 across folds). Dry-run summary from the CLI:
 
 ```
-python src/fgas_spk_loader.py --config config.yaml
+python -m fgas_spk.loader --config scripts/configs/data/config.yaml
 ```
 
-A full example `DataConfig` YAML is in the `fgas_spk_loader` module docstring.
+A full example `DataConfig` YAML is in the `fgas_spk.loader` module docstring.
 
 ## Data store
 

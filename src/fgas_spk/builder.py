@@ -39,10 +39,11 @@ from typing import Callable, Sequence
 import numpy as np
 
 # The on-disk contract -- the dataset container, the filename/directory
-# convention, and the save/load round-trip -- lives in ``fgas_spk_schema``, the
+# convention, and the save/load round-trip -- lives in ``fgas_spk.schema``, the
 # single source of truth. The names below are imported for use by the builders
-# and re-exported so existing callers can keep importing them from this module.
-from fgas_spk_schema import (  # noqa: F401  (re-exported for backward compatibility)
+# and re-exported so existing callers can keep importing them from this module
+# (now ``fgas_spk.builder``).
+from fgas_spk.schema import (  # noqa: F401  (re-exported for backward compatibility)
     SCHEMA_VERSION,
     FgasSpkDataset,
     dataset_dir,
