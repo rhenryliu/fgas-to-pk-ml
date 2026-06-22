@@ -8,8 +8,11 @@
 # single explicit `path:` to a saved .npz -- not both.
 
 # --- Option A: resolve from store fields ---
-# project_root: /pscratch/sd/r/rhliu/projects/fgas-to-pk-ml   # NERSC Perlmutter
-project_root: /Users/hliu/projects/repos/fgas-to-pk-ml/
+# project_root null defers the read root to fgas_spk.paths.resolve_data_root
+# (-> $FGAS_DATA_ROOT, else the repo, where the datasets are git-tracked). The
+# runner fills it before the loader runs. Set an explicit path, or pass
+# --data-root, to read datasets from elsewhere (e.g. a scratch store).
+project_root: null
 suite: CAMELS-IllustrisTNG-L50n512-SB35
 snapshot: 74
 redshift: 0.47
