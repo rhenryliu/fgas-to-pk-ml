@@ -93,6 +93,15 @@ the library is the corrected, maintained version of their loading logic.
 
 ## Environment
 
+On NERSC Perlmutter this repo runs in the conda env **`fgas-ml`** (Python 3.12, with
+the `fgas_spk` package installed editable via `pip install -e .`). Activate it before
+running anything here — the default `python` on Perlmutter is system Python 2.7:
+
+```
+module load python
+conda activate fgas-ml
+```
+
 The canonical environment is two git-tracked files at the repo root: `environment.yml`
 (conda-forge Python 3.12 + pip) and `requirements.txt` (exact, top-level pins). They
 install matched versions on NERSC Perlmutter (Linux x86_64, CUDA) and an Apple-Silicon

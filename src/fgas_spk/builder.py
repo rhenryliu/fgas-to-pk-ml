@@ -76,8 +76,10 @@ def _load_one_simulation(
             producer does not save ``SubhaloMStar``.
 
     Returns:
-        dict: With keys ``'fgas'`` (n_radii, n_halos), ``'halo_masses'``
-            (n_halos,, descending), ``'radii_mpch'`` (n_radii,), and ``'fb'``.
+        dict: With keys ``'fgas'`` (n_radii, n_proj, n_halos) -- the three
+            projections kept on a separate axis -- ``'halo_masses'`` (n_halos,,
+            descending, per distinct halo), ``'radii_mpch'`` (n_radii,), and
+            ``'fb'``.
 
     Raises:
         FileNotFoundError: If the profile file is absent.
@@ -97,29 +99,28 @@ def _load_one_simulation(
             "generation."
         )
 
-    # Stack the three projections along the halo axis for both numerator
-    # (ionized gas) and denominator (total). Using the kpch2 variant keeps the
-    # ratio physical; the arcmin2 variant gives an identical ratio since the
-    # per-radius angular conversion cancels.
-    ionized = np.concatenate(
+    # Keep the three projections on a separate axis (not concatenated into the
+    # halo axis), so a number-density cut selects N *distinct* halos with all of
+    # their projections, rather than N halo-projection columns (which would be
+    # ~N/3 distinct halos). Using the kpch2 variant keeps the ratio physical; the
+    # arcmin2 variant gives an identical ratio since the per-radius angular
+    # conversion cancels.
+    ionized = np.stack(
         [data[f"prof2_ionized_gas_DSigma_kpch2_{p}"] for p in _PROJECTIONS], axis=1
     )
-    total = np.concatenate(
+    total = np.stack(
         [data[f"prof1_total_DSigma_kpch2_{p}"] for p in _PROJECTIONS], axis=1
     )
 
     fb = float(data["fb"])
     # Gas fraction per halo, normalised by the cosmic baryon fraction.
     with np.errstate(divide="ignore", invalid="ignore"):
-        fgas = ionized / total / fb  # (n_radii, n_halos * n_projections)
+        fgas = ionized / total / fb  # (n_radii, n_proj, n_halos)
 
-    halo_masses = np.asarray(data["halo_masses"])  # M_500c [M_sun/h]
-    # Halo masses are per-halo (not per-projection); tile to match the stacked
-    # halo axis so a single ranking applies across projections.
-    halo_masses_tiled = np.tile(halo_masses, len(_PROJECTIONS))
+    halo_masses = np.asarray(data["halo_masses"])  # M_500c [M_sun/h], per halo
 
     if rank_key == "halo_mass":
-        order = np.argsort(halo_masses_tiled)[::-1]  # descending M_500c
+        order = np.argsort(halo_masses)[::-1]  # descending M_500c, per distinct halo
     elif rank_key == "stellar":
         raise NotImplementedError(
             "Stellar-mass ranking requires SubhaloMStar, which the producer "
@@ -129,8 +130,9 @@ def _load_one_simulation(
     else:
         raise ValueError(f"Unknown rank_key: {rank_key!r}")
 
-    fgas = fgas[:, order]
-    halo_masses_tiled = halo_masses_tiled[order]
+    # Reorder the halo axis (shared across projections) by descending mass.
+    fgas = fgas[:, :, order]
+    halo_masses = halo_masses[order]
 
     radii_mpch = np.asarray(data["r12_to_mpch"])
     if radii_mpch.ndim > 1:  # some files store one row per sim; collapse it
@@ -138,7 +140,7 @@ def _load_one_simulation(
 
     return {
         "fgas": fgas,
-        "halo_masses": halo_masses_tiled,
+        "halo_masses": halo_masses,
         "radii_mpch": radii_mpch,
         "fb": fb, # type: ignore
     }
@@ -211,8 +213,9 @@ def build_fgas_spk_dataset(
     """Assemble the full f_gas(R) to SP(k) dataset across all simulations.
 
     For each simulation and each target number density, the N most massive
-    halos (under ``rank_key``) are stacked and their mean gas-fraction profile
-    is computed, where ``N = int(number_density * box_size_mpch**3)``. The
+    *distinct* halos (under ``rank_key``) are selected; the three projections of
+    each halo are averaged first, then the mean gas-fraction profile is taken
+    across those halos, where ``N = int(number_density * box_size_mpch**3)``. The
     per-simulation suppression curve is read from a single shared file.
 
     Args:
@@ -269,18 +272,22 @@ def build_fgas_spk_dataset(
         if radii_ref is None:
             radii_ref = loaded["radii_mpch"]
 
-        fgas = loaded["fgas"]               # (n_radii, n_halos_sorted)
-        masses = loaded["halo_masses"]      # (n_halos_sorted,), descending
+        fgas = loaded["fgas"]               # (n_radii, n_proj, n_halos), halo axis desc by mass
+        masses = loaded["halo_masses"]      # (n_halos,), descending
+        n_halos_total = fgas.shape[2]
 
         per_nd_mean = []
         per_nd_std = []
         per_nd_mass = []
         for n_halos in n_halos_per_nd:
-            n_use = min(n_halos, fgas.shape[1])
-            block = fgas[:, :n_use]
-            per_nd_mean.append(np.nanmean(block, axis=1))
-            per_nd_std.append(np.nanstd(block, axis=1))
-            per_nd_mass.append(np.nanmean(masses[:n_use]))
+            n_use = min(n_halos, n_halos_total)
+            block = fgas[:, :, :n_use]               # (n_radii, n_proj, n_use)
+            # Average over the projections first (repeat measurements of the same
+            # halo), then take statistics across the distinct halos.
+            halo_mean = np.nanmean(block, axis=1)    # (n_radii, n_use)
+            per_nd_mean.append(np.nanmean(halo_mean, axis=1))  # mean over halos
+            per_nd_std.append(np.nanstd(halo_mean, axis=1))    # halo-to-halo scatter
+            per_nd_mass.append(np.nanmean(masses[:n_use]))     # over distinct halos
 
         fgas_rows.append(np.stack(per_nd_mean))       # (n_nd, n_radii)
         fgas_std_rows.append(np.stack(per_nd_std))

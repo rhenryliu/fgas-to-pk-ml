@@ -178,7 +178,8 @@ BASE = "/pscratch/sd/l/lindajin/CAMELS/IllustrisTNG/L50n512_SB35/SB35_{}/data/"
 SNAPSHOT, REDSHIFT = 74, 0.47        # snap82 -> z=0.21
 
 # Correct path: rebuild number-density bins from raw per-halo profiles,
-# re-ranking halos by mass so the bins are the N most massive (see Caveats).
+# re-ranking halos by mass so the bins are the N most massive distinct halos,
+# all projections averaged per halo (see Caveats).
 dataset = F.build_fgas_spk_dataset(
     base_path_template=BASE,
     suppression_path=Path(DATA_DIR) / f"Ptot_Pdm_ratio_snap{SNAPSHOT}.npz",
@@ -527,8 +528,10 @@ are regenerated, not version-controlled.
 
 - **Halo-ordering fix.** The upstream CAMELS-fork selection returns halos in FoF
   catalogue order, not sorted by the selection proxy. `build_fgas_spk_dataset`
-  re-ranks columns by `rank_key` (default `halo_mass` = M_500c) before slicing
-  the top-N, so number-density bins are genuinely the N most massive. The
+  re-ranks halos by `rank_key` (default `halo_mass` = M_500c) before slicing the
+  top-N, so number-density bins are genuinely the N most massive **distinct**
+  halos (each halo's three projections are averaged before the bin statistics,
+  so `N = int(nd · V)` counts distinct halos, not halo-projection samples). The
   compiled fast path cannot do this — it inherits the frozen ordering.
 - **`rank_key="stellar"` is not yet wired.** The producer does not save
   `SubhaloMStar`, so stellar-mass ranking (the observationally-matched choice)

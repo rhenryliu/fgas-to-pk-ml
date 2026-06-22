@@ -98,7 +98,8 @@ def grouped_split(sim_index: np.ndarray, split: "SplitSpec") -> dict[str, np.nda
     ``sim_index`` values are shuffled (seeded) and partitioned by the split
     fractions, then rows are masked by simulation membership. Splitting by
     ``(sim, nd)`` row would leak a simulation's shared SP(k) target across folds;
-    grouping by simulation avoids that.
+    grouping by simulation avoids that. With ``val_frac == 0`` the validation
+    fold is empty by construction.
 
     Args:
         sim_index (np.ndarray): Originating simulation id per row, shape
@@ -115,11 +116,16 @@ def grouped_split(sim_index: np.ndarray, split: "SplitSpec") -> dict[str, np.nda
     shuffled = np.random.default_rng(split.seed).permutation(unique_sims)
 
     n = len(shuffled)
-    n_train = min(int(round(split.train_frac * n)), n)
-    n_test = min(int(round(split.test_frac * n)), n - n_train)
-    train_sims = shuffled[:n_train]
-    val_sims = shuffled[n_train: n - n_test]
-    test_sims = shuffled[n - n_test:]
+    # Cumulative boundaries from the fractions: this honours the fractions
+    # exactly, keeps the three folds disjoint and covering, and -- crucially --
+    # makes val_frac == 0 yield an empty val fold by construction (the previous
+    # round-each-independently scheme could leak a simulation into val). Any
+    # rounding slack falls into the test fold.
+    c_train = int(round(split.train_frac * n))
+    c_val = int(round((split.train_frac + split.val_frac) * n))
+    train_sims = shuffled[:c_train]
+    val_sims = shuffled[c_train:c_val]
+    test_sims = shuffled[c_val:]
 
     return {
         "train": np.isin(sim_index, train_sims),
@@ -170,7 +176,7 @@ def _write_pred_vs_true_figure(
     held = summary["held_out_split"]
     sub = _subset(td, masks[held])
     y_true = np.asarray(sub.y).ravel()
-    y_pred = np.asarray(model.predict(sub.X, sub.X_cond)).ravel()
+    y_pred = np.asarray(model.predict(sub.X, sub.X_cond, sub.X_params)).ravel()
 
     fig, ax = plt.subplots(figsize=(5, 5))
     ax.scatter(y_true, y_pred, s=6, alpha=0.4)
@@ -250,12 +256,17 @@ def run_training(
         "n_train": int(masks["train"].sum()),
         "n_val": int(masks["val"].sum()),
         "n_test": int(masks["test"].sum()),
-        "train_rmse": _rmse(train_td.y, model.predict(train_td.X, train_td.X_cond)),
+        "train_rmse": _rmse(
+            train_td.y,
+            model.predict(train_td.X, train_td.X_cond, train_td.X_params),
+        ),
     }
     for name in ("val", "test"):
         if masks[name].any():
             sub = _subset(td, masks[name])
-            summary[f"{name}_rmse"] = _rmse(sub.y, model.predict(sub.X, sub.X_cond))
+            summary[f"{name}_rmse"] = _rmse(
+                sub.y, model.predict(sub.X, sub.X_cond, sub.X_params)
+            )
     # Headline held-out metric: prefer test, then val, then train.
     held = "test" if "test_rmse" in summary else "val" if "val_rmse" in summary else "train"
     summary["held_out_split"] = held

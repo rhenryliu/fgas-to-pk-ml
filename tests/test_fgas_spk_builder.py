@@ -147,3 +147,72 @@ def test_save_dataset_none_snapshot_ok_and_surfaced_from_meta(tmp_path):
     )
     # No cross-check error, and the snapshot is still surfaced from the metadata.
     assert m.load_dataset(out).snapshot == 82
+
+
+# --- raw-path selection: N *distinct* halos, all projections averaged ------
+
+def _write_raw_sim(sim_data_dir: Path, masses, n_radii: int = 3,
+                   snapshot: int = 74) -> None:
+    """Write one simulation's raw ``Profiles_*.npz`` for the raw loader.
+
+    ``fgas = ionized / total / fb`` is rigged so each halo's profile value equals
+    its mass (``total = 1``, ``fb = 1``, ``ionized[:, h] = mass[h]`` at every
+    radius and identical across the three projections). That makes the per-bin
+    mean/std over a selected set of halos exactly predictable from the masses.
+    """
+    sim_data_dir.mkdir(parents=True, exist_ok=True)
+    masses = np.asarray(masses, dtype=float)
+    n_halos = masses.shape[0]
+    per_halo = np.tile(masses, (n_radii, 1))  # (n_radii, n_halos); col h = mass[h]
+    arrays = {
+        "fb": 1.0,
+        "halo_masses": masses,
+        "r12_to_mpch": np.linspace(0.1, 1.0, n_radii),
+    }
+    for p in ("xy", "xz", "yz"):
+        arrays[f"prof2_ionized_gas_DSigma_kpch2_{p}"] = per_halo.copy()
+        arrays[f"prof1_total_DSigma_kpch2_{p}"] = np.ones((n_radii, n_halos))
+    fname = f"Profiles_tau-CAP_total-DSigma_ionized_gas-DSigma_snap{snapshot}.npz"
+    np.savez(sim_data_dir / fname, **arrays)
+
+
+def test_build_selects_top_n_distinct_halos(tmp_path):
+    # Masses deliberately unsorted so the mass-ranking must do real work.
+    masses = np.array([10.0, 60.0, 30.0, 50.0, 20.0, 40.0])
+    n_sims, n_radii = 2, 3
+    base = str(tmp_path / "SB35_{}" / "data")
+    for sid in range(n_sims):
+        _write_raw_sim(Path(base.format(sid)), masses, n_radii=n_radii)
+    sup = tmp_path / "Ptot_Pdm_ratio_snap74.npz"
+    _write_suppression(sup, n_sims=n_sims)
+
+    # box_size = 1 so int(nd * box**3) == nd exactly -> ask for 2 then 3 halos.
+    ds = m.build_fgas_spk_dataset(
+        base, sup, snapshot=74, number_densities=(2.0, 3.0), box_size_mpch=1.0,
+    )
+
+    assert ds.fgas.shape == (n_sims, 2, n_radii)
+    sorted_masses = np.sort(masses)[::-1]
+    for j, n in enumerate((2, 3)):
+        top = sorted_masses[:n]  # the N most massive DISTINCT halos
+        # fgas encodes mass, so the per-bin mean profile is the mean of the
+        # top-N distinct-halo masses at every radius -- not the top ~N/3 the
+        # old projection-tiled slice produced (which would be 60, then 55).
+        np.testing.assert_allclose(ds.fgas[:, j, :], top.mean())
+        np.testing.assert_allclose(ds.fgas_std[:, j, :], top.std())
+        np.testing.assert_allclose(ds.mean_halo_mass[:, j], top.mean())
+
+
+def test_build_clamps_when_density_exceeds_halo_count(tmp_path):
+    masses = np.array([10.0, 20.0, 30.0])  # only three halos exist
+    base = str(tmp_path / "SB35_{}" / "data")
+    _write_raw_sim(Path(base.format(0)), masses)
+    sup = tmp_path / "Ptot_Pdm_ratio_snap74.npz"
+    _write_suppression(sup, n_sims=1)
+
+    # Asking for 10 halos must clamp to the 3 available (all projections).
+    ds = m.build_fgas_spk_dataset(
+        base, sup, snapshot=74, number_densities=(10.0,), box_size_mpch=1.0,
+    )
+    np.testing.assert_allclose(ds.fgas[:, 0, :], masses.mean())
+    np.testing.assert_allclose(ds.mean_halo_mass[:, 0], masses.mean())
