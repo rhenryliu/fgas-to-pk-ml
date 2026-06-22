@@ -54,10 +54,11 @@ def main(argv: list[str] | None = None) -> int:
         scratch_root_override=args.scratch_root,
     )
 
-    print(f"run_id   : {result.run_id}")
-    print(f"run_dir  : {result.run_dir}")
-    print(f"held-out : {result.summary['held_out_split']}")
-    print(f"RMSE     : {result.summary['rmse']:.6g}")
+    print(f"run_id    : {result.run_id}")
+    print(f"run_dir   : {result.run_dir}")
+    print(f"held-out  : {result.summary['held_out_split']}")
+    print(f"RMSE      : {result.summary['rmse']:.6g}")
+    print(f"checkpoint: {result.checkpoint_path}")
     return 0
 
 

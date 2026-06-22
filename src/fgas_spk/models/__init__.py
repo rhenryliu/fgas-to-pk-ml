@@ -18,7 +18,10 @@ surface to numpy + pyyaml. Import :mod:`fgas_spk.models` explicitly to use it.
 from fgas_spk.models.base import REGISTRY, ProfileToSpk, register
 
 # Side-effect imports: running each module executes its @register decorator,
-# which is what populates REGISTRY. Add new plugins to this list.
+# which is what populates REGISTRY. Add new plugins to this list. These modules
+# import their heavy deps (torch, sklearn) lazily inside methods, so importing
+# this package stays torch-free -- only the @register side effect runs here.
+from fgas_spk.models import mlp_regressor  # noqa: F401  (registers "mlp_regressor")
 from fgas_spk.models import pca_linear  # noqa: F401  (registers "pca_linear")
 
-__all__ = ["REGISTRY", "ProfileToSpk", "register", "pca_linear"]
+__all__ = ["REGISTRY", "ProfileToSpk", "register", "mlp_regressor", "pca_linear"]
