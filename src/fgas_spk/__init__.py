@@ -10,7 +10,9 @@ for the CAMELS IllustrisTNG SB35 suite. It is organized as three submodules:
 - :mod:`fgas_spk.builder` -- assemble a dataset from CAMELS profile products,
   correcting the upstream halo-ordering bug;
 - :mod:`fgas_spk.loader` -- serve model-ready numpy arrays from a saved dataset
-  per a :class:`DataConfig`.
+  per a :class:`DataConfig`;
+- :mod:`fgas_spk.experiment` -- the trainer-side :class:`RunConfig` (model and
+  training concerns only) and :func:`load_configs`.
 
 The most commonly used names are re-exported here as a flat API, so callers can
 write ``import fgas_spk as F; F.save_dataset(...)`` without reaching into the
@@ -23,6 +25,7 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 
 from fgas_spk.builder import build_fgas_spk_dataset, build_fgas_spk_from_compiled
+from fgas_spk.experiment import RunConfig, SplitSpec, load_configs
 from fgas_spk.loader import DataConfig, TrainingData, load_training_data
 from fgas_spk.schema import (
     SCHEMA_VERSION,
@@ -56,4 +59,8 @@ __all__ = [
     "DataConfig",
     "TrainingData",
     "load_training_data",
+    # experiment -- trainer-side config
+    "RunConfig",
+    "SplitSpec",
+    "load_configs",
 ]
