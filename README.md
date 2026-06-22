@@ -14,19 +14,43 @@ products written by `SimulationStacker` and turns them into model-ready arrays.
 
 The library is the installed `fgas_spk` package (distribution name
 `fgas-to-pk-ml`), laid out under `src/` and installed editable with
-`pip install -e .`.
+`pip install -e .`. It has two layers: a **data-assembly core**
+(schema → builder → loader) that turns CAMELS stacking products into saved,
+model-ready datasets, and a thin **training / experiment layer** (paths,
+experiment, models, run_record, train) that takes a saved dataset through a
+recorded model run.
+
+**Data-assembly core** — imports only numpy + pyyaml:
 
 | File | Purpose |
 | --- | --- |
-| `src/fgas_spk/schema.py` | **The on-disk data contract** — single source of truth: the `FgasSpkDataset` container, the filename/directory convention, `save_dataset`/`load_dataset`/`resolve_dataset_path`, and `SCHEMA_VERSION`. |
+| `src/fgas_spk/schema.py` | **The on-disk data contract** — single source of truth: the `FgasSpkDataset` container, the filename/directory convention, `save_dataset`/`load_dataset`/`resolve_dataset_path`/`dataset_dir`/`ensure_store_dirs`, and `SCHEMA_VERSION`. |
 | `src/fgas_spk/builder.py` | Builder: load profiles, fix the halo-ordering bug, assemble `(profile, nd) → SP(k)` arrays. Imports the contract from `fgas_spk.schema`. |
 | `src/fgas_spk/loader.py` | Configurable training-data loader: read a saved dataset and serve model-ready numpy arrays per a `DataConfig`. Importable by training scripts and runnable as a CLI dry-run. numpy + pyyaml only (no torch). |
-| `src/fgas_spk/__init__.py` | Package init: re-exports the common API (`FgasSpkDataset`, `save_dataset`/`load_dataset`, `build_fgas_spk_dataset`, `DataConfig`/`load_training_data`, …) as a flat `fgas_spk.*` surface. |
+| `src/fgas_spk/__init__.py` | Package init: re-exports the common API (`FgasSpkDataset`, `save_dataset`/`load_dataset`, `build_fgas_spk_dataset`, `DataConfig`/`load_training_data`, `RunConfig`/`SplitSpec`/`load_configs`, …) as a flat `fgas_spk.*` surface. |
+
+**Training / experiment layer** — opt-in; the models and runner pull
+scikit-learn, joblib (and lazily torch/matplotlib) from the pinned environment:
+
+| File | Purpose |
+| --- | --- |
+| `src/fgas_spk/paths.py` | Machine- and layout-aware path resolution: `resolve_data_root` (reads — defaults to the repo), `resolve_scratch_root` (writes — no default; set `$FGAS_SCRATCH_ROOT`), `repo_root`, `figure_dir`, and the `fill_data_root` entry-point helper. No hardcoded paths, no filesystem detection. |
+| `src/fgas_spk/experiment.py` | Trainer-side `RunConfig` (model + training fields only — no data selection), the grouped-by-`sim_index` `SplitSpec`, and `load_configs` (reads the data YAML and run YAML independently — no merge). |
+| `src/fgas_spk/models/` | Model-plugin layer: the `ProfileToSpk` interface, the name→class `REGISTRY`, and the `register` decorator (`base.py`), plus the `pca_linear` reference plugin. Importing the package runs each plugin's `@register` for its side effect. |
+| `src/fgas_spk/run_record.py` | Git-tracked text record + ledger for a run: writes `experiments/runs/<run_id>/` and appends to `experiments/runs.jsonl`. Never imports torch (the device string is passed in). |
+| `src/fgas_spk/train.py` | End-to-end runner: a `(DataConfig, RunConfig)` pair → read-root fill → grouped split → fit a model from the registry → write the run record, checkpoint to scratch, and a diagnostic figure. |
+
+**Backup and provenance** (not maintained):
+
+| File | Purpose |
+| --- | --- |
 | `src/_frozen/fgas_spk_dataset_v0.py` | Frozen pre-refactor backup of the loader, quarantined outside the package (no `__init__.py`). Do not extend; kept only because callers may still source it. |
 | `notebooks/test_CAMELS_sixth_gen.ipynb` | Reference notebook (collaborator-authored) the loader was distilled from. Kept for provenance; not the source of truth. |
+| `notebooks/test_loader.ipynb` | Scratch notebook exercising `fgas_spk.loader`. Not authoritative. |
 
-Configs, figures, and documentation live **here**, in this git-tracked repo.
-Large data and model checkpoints live separately on scratch (see *Data store*).
+Configs, docs, and the small text run records live **here**, in this git-tracked
+repo. Large datasets and model checkpoints live separately on scratch; generated
+figures go to a gitignored `figures/` tree (see *Data store*).
 
 ### Installing and importing
 
@@ -52,21 +76,28 @@ from fgas_spk import schema, builder, loader    # or reach into the submodules
 
 ## Requirements
 
-The library itself (the `fgas_spk` package) imports only:
+The package is **tiered** by import weight:
 
-- Python ≥ 3.10
-- `numpy`
-- `pyyaml` — optional for `fgas_spk.schema`/`fgas_spk.builder` (without it the
-  sidecar manifest is written as JSON instead), but **required** for
-  `fgas_spk.loader`, which reads and writes `DataConfig` YAML.
+- **Core + flat API** (`import fgas_spk`, and `fgas_spk.schema` / `builder` /
+  `loader` / `experiment`) — Python ≥ 3.10, `numpy`, and `pyyaml`. `pyyaml` is
+  optional for `fgas_spk.schema`/`fgas_spk.builder` (without it the sidecar
+  manifest is written as JSON instead) but **required** for `fgas_spk.loader` and
+  `fgas_spk.experiment`, which read and write config YAML. Importing the
+  top-level package stays at this weight — it does **not** pull the training
+  submodules.
+- **Training / experiment layer** (opt-in, imported explicitly) —
+  `fgas_spk.models` and `fgas_spk.train` additionally need **scikit-learn** and
+  **joblib** (the PCA reference model and the checkpoint writer), and `train`
+  imports **torch** and **matplotlib** lazily (device pick + diagnostic figure),
+  treating both as optional. `fgas_spk.run_record` stays light (numpy + stdlib).
 
-These two are the package's declared runtime dependencies in `pyproject.toml`
-(unpinned floors); the exact, cross-platform pins live in `requirements.txt` /
-`environment.yml`.
-
-The cosmology and ML dependencies (pyccl, colossus, SP(k)/BCemu, scikit-learn,
-torch/sbi, …) are **not** part of the library's import surface — they live in the
-pinned environment files below, for the gate and training scripts.
+Only the core's two dependencies are declared in `pyproject.toml` (unpinned
+floors); the exact, cross-platform pins — including the training layer's
+scikit-learn / joblib and the wider cosmology/ML stack (pyccl, colossus,
+SP(k)/BCemu, torch/sbi, …) — live in `requirements.txt` / `environment.yml`.
+Keeping them out of the package metadata is deliberate: the data-assembly core
+must stay installable with just numpy + pyyaml, while the heavier stack serves
+the training, gate, and analysis scripts.
 
 ## Environment
 
@@ -156,8 +187,11 @@ dataset = F.build_fgas_spk_dataset(
     params_path=Path(DATA_DIR) / "camels_params_matrix.npy",   # optional
 )
 
-# Flatten to model-ready arrays. k_target picks SP(k) at one wavenumber;
-# omit it to keep the full SP(k) curve as the target.
+# Quick in-memory check (NOT the training path): flatten the (sim, nd) grid to
+# arrays. This convenience emits a UserWarning — it has no subsetting, radial
+# crop, or X_cond/X_params split. For real training, save the dataset and load it
+# via fgas_spk.loader (below), then run it through fgas_spk.train (see "Running a
+# model"). k_target picks SP(k) at one wavenumber; omit it for the full curve.
 X, nd, y = dataset.to_training_arrays(k_target=3.0)
 # X:  (n_examples, n_radii)   f_gas profiles
 # nd: (n_examples,)           number-density conditioning, (Mpc/h)^-3
@@ -195,7 +229,8 @@ fast = F.build_fgas_spk_from_compiled(
 `mean_halo_mass (n_sims, n_nd)`, `rank_key`, optional `camels_params (n_sims, n_params)`,
 and optional `snapshot` (the snapshot the dataset was built for, e.g. 74 → z=0.47;
 populated by the loaders and carried through `save_dataset`/`load_dataset`).
-Method: `to_training_arrays(k_target=None) -> (X, nd, y)`.
+Method: `to_training_arrays(k_target=None) -> (X, nd, y)` — an in-memory
+quick-check that emits a `UserWarning`; use `fgas_spk.loader` for training.
 
 | Function | What it does |
 | --- | --- |
@@ -264,23 +299,186 @@ python -m fgas_spk.loader --config scripts/configs/data/config.yaml
 
 A full example `DataConfig` YAML is in the `fgas_spk.loader` module docstring.
 
+## Running a model
+
+The training / experiment layer takes a saved dataset through to a recorded run.
+A run is configured by **two independent YAMLs** — the data selection
+(`DataConfig`, above) and the model/training recipe (`RunConfig`) — which
+`load_configs` reads separately and never merges. The split is deliberate: the
+read root lives in the `DataConfig` (its `project_root`), the write root lives in
+the `RunConfig` (its `write_root`), and nothing is copied between them.
+
+### Configuring a run (`RunConfig`)
+
+`RunConfig` (`fgas_spk.experiment`) owns **only** model and training concerns; it
+carries no data-selection fields. Its only path-like field is `write_root` (the
+scratch-root override for run outputs).
+
+| Field | Meaning |
+| --- | --- |
+| `model` | Registry name (validated at run time against `fgas_spk.models.REGISTRY`, not at config-load). |
+| `model_params` | Free-form hyperparameter mapping passed to the model constructor as `**kwargs`. Must be a mapping; `None` is coerced to `{}`. |
+| `seed` | Global reproducibility seed (model init, shuffles). |
+| `split` | A `SplitSpec`: `train_frac`/`val_frac`/`test_frac` (must lie in `[0, 1]`, sum to 1, with `train_frac > 0`) and a `seed`. `val_frac = 0` gives a two-way train/test split. A plain YAML mapping here is coerced to a `SplitSpec`. |
+| `epochs`, `batch_size`, `learning_rate`, `optimizer` | Iterative-training knobs; ignored by non-iterative models (e.g. the PCA reference). |
+| `write_root` | Scratch-root override; `null` defers to `$FGAS_SCRATCH_ROOT` (or `--scratch-root`). |
+
+`RunConfig` mirrors `DataConfig`'s style — `from_yaml`/`to_yaml` round-trip and
+`__post_init__` validation — so the resolved config can be re-serialized verbatim
+into the run record. The bundled `scripts/configs/run/pca_reference.yaml`:
+
+```yaml
+model: pca_linear          # registry name (fgas_spk.models.REGISTRY)
+model_params:
+  n_components: 8          # PCA components of the f_gas profile (capped at fit time)
+seed: 0                    # threaded into PCA's random_state
+split:                     # grouped-by-sim_index; val_frac: 0.0 => two-way train/test
+  train_frac: 0.8
+  val_frac: 0.0
+  test_frac: 0.2
+  seed: 0
+write_root: null           # defers to $FGAS_SCRATCH_ROOT (or --scratch-root)
+```
+
+The split is **always grouped by `sim_index`** — whole simulations go to one fold,
+never split by `(sim, nd)` row — so a simulation's shared SP(k) target cannot leak
+across folds. `grouped_split` seeds the shuffle from `SplitSpec.seed`, so the
+partition is reproducible.
+
+### Models (`fgas_spk.models`)
+
+A model is any object satisfying the `ProfileToSpk` interface — `fit(training_data)`
+and `predict(X, X_cond=None, X_params=None)`; it need not subclass anything.
+Plugins register themselves under a name with the `@register("name")` decorator;
+importing `fgas_spk.models` imports the plugin modules so those decorators run and
+populate `REGISTRY` (name → class). The runner looks a model up with
+`REGISTRY[run_config.model]` and builds it as
+`Model(seed=run_config.seed, **run_config.model_params)`.
+
+The bundled reference plugin is `pca_linear` (`PcaLinear`): PCA-compress the
+profile `X`, concatenate the conditioning scalars `X_cond` alongside the
+components, then linear-map to the SP(k) target with an ordinary least-squares
+regressor. It is a worked **multimodal** example to copy, not a tuned baseline (a
+one-line change at the feature-assembly site makes it profile-only — see its
+module docstring; `X_params` is ignored by this reference). To add a model: write
+a plugin against `ProfileToSpk`, decorate it with `@register`, and add its import
+to `fgas_spk/models/__init__.py` (a registry that never imports its plugins is
+silently empty).
+
+### The runner (`fgas_spk.train`)
+
+`run_training(data_config, run_config, ...)` ties the package together, in order:
+
+1. **Read-root fill** — if the data config is in store-field mode with
+   `project_root` null, fill it from `resolve_data_root` so the loader receives a
+   fully-specified config (a path-mode config is left untouched).
+2. **Write root** — resolve via `resolve_scratch_root`.
+3. **Load** the arrays via `load_training_data` (records the resolved `.npz` on
+   `td.source_path`).
+4. **Split** grouped by `sim_index` per `RunConfig.split`.
+5. **Fit** the model — `REGISTRY[run_config.model](seed=run_config.seed,
+   **run_config.model_params)`, `.fit(train_td)` — and **evaluate** the held-out
+   fold.
+6. **Record + persist** — write the run record, checkpoint the model to
+   `<scratch_root>/models/<run_id>/model.joblib` (via `joblib`), and write a
+   predicted-vs-true figure (run id in the filename, `write_figures=True`).
+
+It returns a `RunResult` (`run_id`, `run_dir`, `summary`, `checkpoint_path`,
+`split_masks`) and raises `KeyError` if `RunConfig.model` is not registered.
+
+**Root resolution precedence** (the two roots are independent):
+
+- *Read root* — `data_root_override` (`--data-root`) → `DataConfig.project_root`
+  (if set) → `$FGAS_DATA_ROOT` → the repo. The override and env var only take
+  effect when `project_root` is left null in store-field mode.
+- *Write root* — `scratch_root_override` (`--scratch-root`) → `RunConfig.write_root`
+  → `$FGAS_SCRATCH_ROOT`. There is **no** default: writes raise a clear error if
+  none is set, rather than guessing a writable location.
+
+The device string is resolved by `pick_device` (`cuda` → `mps` → `cpu`, treating
+torch as optional) and recorded for provenance; the runner itself is numpy/sklearn
+and does no GPU work.
+
+**`summary`** (also written to `summary.json` and carried in the ledger) holds
+`n_train`/`n_val`/`n_test` (row counts), `train_rmse`, `val_rmse` and `test_rmse`
+(only for folds that have rows), the chosen `held_out_split` (preference:
+`test` → `val` → `train`), and the headline `rmse` for that fold.
+
+A minimal programmatic run:
+
+```python
+from fgas_spk import load_configs
+from fgas_spk.train import run_training
+
+data_cfg, run_cfg = load_configs(
+    "scripts/configs/data/config.yaml",
+    "scripts/configs/run/pca_reference.yaml",
+)
+result = run_training(data_cfg, run_cfg)   # roots from the configs / env vars
+print(result.run_id, result.summary["held_out_split"], result.summary["rmse"])
+```
+
+### The CLI
+
+Two scripts drive the runner:
+
+```bash
+# Generic: any (data config, run config) pair.
+python scripts/run.py --config-data scripts/configs/data/config.yaml \
+                      --config-run  scripts/configs/run/pca_reference.yaml \
+                      [--data-root PATH] [--scratch-root PATH]
+
+# Worked example: the PCA reference against the bundled configs.
+python scripts/run_pca_demo.py [--data-root PATH] [--scratch-root PATH]
+```
+
+Both print the `run_id`, the run-record directory, the held-out split, and its
+RMSE (`run_pca_demo.py` also prints the checkpoint path). `--data-root` fills the
+read root only when the data config leaves `project_root` null; `--scratch-root`
+overrides the write root (else `RunConfig.write_root`, else `$FGAS_SCRATCH_ROOT`).
+`scripts/demo.sh` is a SLURM wrapper that runs `run_pca_demo.py` on a Perlmutter
+GPU node.
+
+### What a run writes
+
+One run touches all three storage locations (see *Data store* for the full
+layout):
+
+- **Git-tracked** `experiments/runs/<run_id>/` (`config_data.yaml`,
+  `config_run.yaml`, `env.json`, `metrics.jsonl`, `summary.json`) plus one line
+  appended to `experiments/runs.jsonl`.
+- **Scratch** `<scratch_root>/models/<run_id>/model.joblib` — the checkpoint.
+- **Gitignored** `figures/<YYYY-MM>/<MM-DD>/<run_id>__pred_vs_true.pdf` — the
+  diagnostic figure.
+
 ## Data store
 
-The script writes to a **data-only** scratch store (no configs/figures/docs):
+Outputs land in **three** places, split by size and by whether they are
+provenance:
+
+1. **Scratch store** (`$FGAS_SCRATCH_ROOT`, data-only — no configs/docs) holds
+   the large artifacts: saved datasets and model checkpoints.
+2. **Git-tracked `experiments/`** holds the small, greppable text record of every
+   run.
+3. **Gitignored `figures/`** holds generated diagnostic figures.
+
+### Scratch store (datasets + checkpoints)
 
 ```
-<project_root>/                       # e.g. /pscratch/sd/r/rhliu/projects/fgas-to-pk-ml
+<scratch_root>/                       # $FGAS_SCRATCH_ROOT, e.g. /pscratch/sd/r/rhliu/projects/fgas-to-pk-ml
 ├── datasets/
 │   └── <suite>/snap<NNN>_z<z>/src-<source>/
 │       ├── fgas_spk__<suite>__snap<NNN>_z<z>__src-<source>__rank-<rank>__<tag>.npz
 │       └── fgas_spk__...__<tag>.yaml          # human-readable manifest
-└── models/                                     # large checkpoints only
+└── models/
+    └── <run_id>/model.joblib                   # one checkpoint dir per run
 ```
 
-The path nests by the axes that define a dataset — **suite → snapshot/redshift →
-source** — so products from different producers (e.g. `src-lindajin` vs
-`src-rhliu`) sit side by side and never collide. The leaf filename is fully
-self-describing, so a file stays identifiable if copied out of the tree:
+The dataset path nests by the axes that define a dataset — **suite →
+snapshot/redshift → source** — so products from different producers (e.g.
+`src-lindajin` vs `src-rhliu`) sit side by side and never collide. The leaf
+filename is fully self-describing, so a file stays identifiable if copied out of
+the tree:
 
 - `<source>` — who produced the underlying profiles (`lindajin`, `rhliu`, …).
 - `<rank>` — the halo ordering used for the number-density cut: `m500`
@@ -289,6 +487,41 @@ self-describing, so a file stays identifiable if copied out of the tree:
 
 Each `.npz` embeds its full metadata under `__meta__`; the `.yaml` sidecar is the
 same metadata in human-readable form.
+
+### Run records (git-tracked `experiments/`)
+
+Every run writes a small text record under the repo, plus one ledger line:
+
+```
+<repo>/experiments/
+├── runs/<run_id>/
+│   ├── config_data.yaml     # the resolved DataConfig actually used
+│   ├── config_run.yaml      # the resolved RunConfig actually used
+│   ├── env.json             # git sha + dirty flag, seed, device, roots, dataset
+│   │                        #   __meta__, suppression-target definition, pkg versions
+│   ├── metrics.jsonl        # per-epoch rows (empty for non-iterative models)
+│   └── summary.json         # headline metrics (split sizes, per-split + held-out RMSE)
+└── runs.jsonl               # one greppable line per run (the ledger)
+```
+
+A run is identified by
+
+```
+run_id = "<UTC-timestamp>__<config-hash8>__<git-sha7>"
+```
+
+where the config hash is a stable hash over the resolved `(DataConfig, RunConfig)`
+pair and the git sha is the current `HEAD` (with a dirty flag when the tree has
+uncommitted or untracked changes). The record captures the suppression-target
+definition verbatim (`run_record.DEFAULT_SUPPRESSION_DEFINITION`) so runs built
+against different target definitions are never silently compared (see *Caveats*).
+
+### Figures (gitignored `figures/`)
+
+`fgas_spk.paths.figure_dir` returns a dated directory
+`<repo>/figures/<YYYY-MM>/<MM-DD>/`; the run id goes in the **filename** (e.g.
+`<run_id>__pred_vs_true.pdf`), not a subfolder. `figures/` is gitignored — figures
+are regenerated, not version-controlled.
 
 ## Caveats (read before trusting a dataset)
 

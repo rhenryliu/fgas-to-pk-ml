@@ -2,8 +2,8 @@
 
 This module turns a saved :class:`~fgas_spk.schema.FgasSpkDataset` (written by
 :mod:`fgas_spk.builder` via :mod:`fgas_spk.schema`) into model-ready numpy
-arrays, according to a :class:`DataConfig`. It is importable by future training
-scripts and runnable as a CLI dry-run.
+arrays, according to a :class:`DataConfig`. It is importable by the training
+runner (:mod:`fgas_spk.train`) and other scripts, and runnable as a CLI dry-run.
 
 It does exactly one thing: read a saved dataset and serve arrays. It performs
 **no preprocessing, no normalisation, and no splitting** -- those belong to the
@@ -54,10 +54,13 @@ Example config (YAML)::
 CLI::
 
     python -m fgas_spk.loader --config scripts/configs/data/config.yaml
+    python -m fgas_spk.loader --config scripts/configs/data/config.yaml --data-root PATH
 
 prints a summary (resolved path, ``X``/``X_cond``/``X_params``/``y`` shapes,
-number-density values, target mode, n_sims) and exits. It loads but does not
-train and has no side effects.
+number-density values, target mode, n_sims) and exits. ``--data-root`` fills the
+read root only when the config leaves ``project_root`` null in store-field mode
+(else ``$FGAS_DATA_ROOT``, else the repo). It loads but does not train and has no
+side effects.
 """
 
 from __future__ import annotations
@@ -485,9 +488,19 @@ def main(argv: list[str] | None = None) -> int:
         "--config", required=True, type=str,
         help="Path to a DataConfig YAML file.",
     )
+    parser.add_argument(
+        "--data-root", default=None, type=str,
+        help="Override the read root; only fills a null project_root in "
+        "store-field mode (else $FGAS_DATA_ROOT, else the repo).",
+    )
     args = parser.parse_args(argv)
 
+    # Fill a null project_root at this entry point (the core resolution logic
+    # stays free of any paths dependency). Imported locally for that reason.
+    from fgas_spk.paths import fill_data_root
+
     config = DataConfig.from_yaml(args.config)
+    config = fill_data_root(config, explicit=args.data_root)
     td = load_training_data(config)
     print(_summarize(td))
     return 0

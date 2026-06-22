@@ -28,7 +28,6 @@ fits, and resolves no physics choice.
 
 from __future__ import annotations
 
-import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -38,7 +37,12 @@ import numpy as np
 
 from fgas_spk.loader import TrainingData, load_training_data
 from fgas_spk.models import REGISTRY
-from fgas_spk.paths import figure_dir, resolve_data_root, resolve_scratch_root
+from fgas_spk.paths import (
+    figure_dir,
+    fill_data_root,
+    resolve_data_root,
+    resolve_scratch_root,
+)
 from fgas_spk.run_record import write_run_record
 
 if TYPE_CHECKING:  # type hints only
@@ -218,13 +222,9 @@ def run_training(
     Raises:
         KeyError: If ``RunConfig.model`` is not in the registry.
     """
-    # 2. READ-ROOT FILL -- store-field mode only (path mode carries its own path;
-    # filling project_root then would trip DataConfig's "not both" guard).
-    if data_config.path is None and data_config.project_root is None:
-        data_config = dataclasses.replace(
-            data_config,
-            project_root=str(resolve_data_root(explicit=data_root_override)),
-        )
+    # 2. READ-ROOT FILL via the shared entry-point helper (store-field mode only;
+    # a path-mode config is returned untouched).
+    data_config = fill_data_root(data_config, explicit=data_root_override)
 
     # 3. WRITE ROOT.
     scratch_root = resolve_scratch_root(

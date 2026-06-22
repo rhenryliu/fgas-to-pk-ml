@@ -14,11 +14,13 @@ Run from the repository root::
 
     python scripts/load_data_demo.py
     python scripts/load_data_demo.py --config path/to/other_config.yaml
+    python scripts/load_data_demo.py --data-root /path/to/store
 
-Note on paths: the bundled config sets ``project_root`` to an absolute path, so
-the dataset resolves the same regardless of the current working directory. If
-you switch ``project_root`` to a relative value, the loader resolves it against
-the current working directory -- run from the repo root in that case.
+Note on the read root: the bundled config leaves ``project_root`` null, which
+defers to :func:`fgas_spk.paths.resolve_data_root` (``$FGAS_DATA_ROOT``, else the
+repo, where the datasets are git-tracked). This demo fills it at load time, the
+same way the runner and the loader CLI do; pass ``--data-root`` to read datasets
+from elsewhere, or set ``project_root`` explicitly in the config.
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ from pathlib import Path
 import numpy as np
 
 from fgas_spk import loader as L
+from fgas_spk.paths import fill_data_root
 
 # Default config shipped alongside this demo.
 _DEFAULT_CONFIG = Path(__file__).resolve().parent / "configs" / "data" / "config.yaml"
@@ -110,9 +113,17 @@ def main(argv: list[str] | None = None) -> int:
         "--config", type=str, default=str(_DEFAULT_CONFIG),
         help=f"Path to a DataConfig YAML file (default: {_DEFAULT_CONFIG}).",
     )
+    parser.add_argument(
+        "--data-root", type=str, default=None,
+        help="Override the read root; only fills a null project_root in "
+        "store-field mode (else $FGAS_DATA_ROOT, else the repo).",
+    )
     args = parser.parse_args(argv)
 
+    # Fill a null project_root at this entry point (same helper the runner and
+    # the loader CLI use), so the loader receives a fully-specified config.
     config = L.DataConfig.from_yaml(args.config)
+    config = fill_data_root(config, explicit=args.data_root)
     td = L.load_training_data(config)
 
     print(f"config        : {args.config}")

@@ -2,7 +2,9 @@
 
 This package learns the mapping from projected gas-fraction profiles
 ``f_gas(R)`` to matter power-spectrum suppression ``SP(k) = P_total(k) / P_DM(k)``
-for the CAMELS IllustrisTNG SB35 suite. It is organized as three submodules:
+for the CAMELS IllustrisTNG SB35 suite. It has two layers.
+
+The **data-assembly core** (imports only numpy + pyyaml):
 
 - :mod:`fgas_spk.schema` -- the on-disk data contract and single source of
   truth (the :class:`FgasSpkDataset` container, the filename/directory
@@ -12,11 +14,26 @@ for the CAMELS IllustrisTNG SB35 suite. It is organized as three submodules:
 - :mod:`fgas_spk.loader` -- serve model-ready numpy arrays from a saved dataset
   per a :class:`DataConfig`;
 - :mod:`fgas_spk.experiment` -- the trainer-side :class:`RunConfig` (model and
-  training concerns only) and :func:`load_configs`.
+  training concerns only), the grouped :class:`SplitSpec`, and
+  :func:`load_configs`.
+
+The **training / experiment layer** (opt-in; pulls scikit-learn, joblib, and
+lazily torch/matplotlib from the environment -- import these explicitly):
+
+- :mod:`fgas_spk.paths` -- machine- and layout-aware path resolution for reads
+  and writes (a leaf module: no intra-package imports at runtime);
+- :mod:`fgas_spk.models` -- the :class:`ProfileToSpk` interface, the model
+  ``REGISTRY``, and the ``pca_linear`` reference plugin;
+- :mod:`fgas_spk.run_record` -- the git-tracked text record and ledger for a
+  run;
+- :mod:`fgas_spk.train` -- the end-to-end runner tying a ``(DataConfig,
+  RunConfig)`` pair through to a recorded run.
 
 The most commonly used names are re-exported here as a flat API, so callers can
 write ``import fgas_spk as F; F.save_dataset(...)`` without reaching into the
-submodules. The submodules remain importable directly for the full surface.
+submodules; importing the top-level package stays at numpy + pyyaml and does not
+pull the training layer. The submodules remain importable directly for the full
+surface.
 """
 
 from __future__ import annotations

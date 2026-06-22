@@ -296,3 +296,34 @@ def test_cli_dry_run_prints_summary(tmp_path, capsys):
     assert "resolved path" in out
     assert "X shape" in out
     assert "target_mode=curve" in out
+
+
+# --- entry-point read-root fill (null project_root through the loader CLI) --
+
+def _null_root_config(tag: str = "v1") -> "L.DataConfig":
+    """A store-field DataConfig with project_root EXPLICITLY null."""
+    return L.DataConfig(
+        project_root=None, suite="TEST", snapshot=74, redshift=0.47,
+        source="rhliu", rank="m500", tag=tag,
+    )
+
+
+def test_cli_fills_null_project_root_from_data_root_env(tmp_path, monkeypatch, capsys):
+    # A null project_root must resolve via $FGAS_DATA_ROOT at the CLI entry point
+    # -- not raise "missing project_root".
+    _save(tmp_path, tag="v1")
+    monkeypatch.setenv("FGAS_DATA_ROOT", str(tmp_path))
+    cfg_path = _null_root_config().to_yaml(tmp_path / "config_data.yaml")
+    rc = L.main(["--config", str(cfg_path)])
+    assert rc == 0
+    assert "resolved path" in capsys.readouterr().out
+
+
+def test_cli_honours_data_root_override(tmp_path, monkeypatch, capsys):
+    # The --data-root override fills the null project_root even with no env var.
+    _save(tmp_path, tag="v1")
+    monkeypatch.delenv("FGAS_DATA_ROOT", raising=False)
+    cfg_path = _null_root_config().to_yaml(tmp_path / "config_data.yaml")
+    rc = L.main(["--config", str(cfg_path), "--data-root", str(tmp_path)])
+    assert rc == 0
+    assert "resolved path" in capsys.readouterr().out

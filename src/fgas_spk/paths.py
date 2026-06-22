@@ -19,10 +19,15 @@ The per-machine value belongs in the environment, set once per machine.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import subprocess
 from datetime import date
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # type hint only; never imported at runtime (keeps paths a leaf)
+    from fgas_spk.loader import DataConfig
 
 # paths.py lives at <repo_root>/src/fgas_spk/paths.py, so the repo root is three
 # parents up. Used only as a fallback when the git top-level cannot be resolved.
@@ -140,3 +145,34 @@ def figure_dir(subdir: str | None = None) -> Path:
         out = out / subdir
     out.mkdir(parents=True, exist_ok=True)
     return out
+
+
+def fill_data_root(
+    config: "DataConfig", explicit: str | Path | None = None
+) -> "DataConfig":
+    """Return a DataConfig with its read root filled, if it was left to default.
+
+    A DataConfig with ``project_root`` null defers the read root to
+    :func:`resolve_data_root`. That default must be applied at the loader's
+    **entry points** (the loader CLI, the demo, the training runner) -- never
+    inside ``DataConfig.resolve_path`` or ``load_training_data``, which stay pure
+    -- so this is the single shared implementation all three reuse.
+
+    The fill happens only in store-field mode (``path`` is None) with
+    ``project_root`` None. A config that carries an explicit ``path`` is returned
+    unchanged (filling ``project_root`` would trip ``DataConfig``'s
+    "not both" guard), and a non-null ``project_root`` is respected as-is.
+
+    Args:
+        config (DataConfig): The config to fill.
+        explicit (str | Path | None): Explicit read-root override forwarded to
+            :func:`resolve_data_root`. Defaults to None.
+
+    Returns:
+        DataConfig: ``config`` unchanged, or a copy with ``project_root`` filled.
+    """
+    if config.path is None and config.project_root is None:
+        return dataclasses.replace(
+            config, project_root=str(resolve_data_root(explicit=explicit))
+        )
+    return config

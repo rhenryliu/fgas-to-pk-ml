@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 import fgas_spk.paths as paths
+from fgas_spk.loader import DataConfig
 
 
 # --- repo_root -------------------------------------------------------------
@@ -117,3 +118,41 @@ def test_figure_dir_idempotent(tmp_path, monkeypatch):
     second = paths.figure_dir()
     assert first == second
     assert first.is_dir()
+
+
+# --- fill_data_root --------------------------------------------------------
+
+def _store_config(project_root=None):
+    """A store-field DataConfig (path is None) for fill tests."""
+    return DataConfig(
+        project_root=project_root, suite="TEST", snapshot=74, redshift=0.47,
+        source="rhliu", rank="m500", tag="v1",
+    )
+
+
+def test_fill_data_root_fills_null_store_field_from_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("FGAS_DATA_ROOT", str(tmp_path))
+    out = paths.fill_data_root(_store_config(project_root=None))
+    assert out.project_root == str(tmp_path)
+
+
+def test_fill_data_root_honours_explicit_override(tmp_path, monkeypatch):
+    monkeypatch.setenv("FGAS_DATA_ROOT", str(tmp_path / "from_env"))
+    out = paths.fill_data_root(_store_config(), explicit=tmp_path / "from_arg")
+    assert out.project_root == str(tmp_path / "from_arg")
+
+
+def test_fill_data_root_respects_set_project_root(tmp_path):
+    cfg = _store_config(project_root="/explicit/store")
+    out = paths.fill_data_root(cfg, explicit=tmp_path)
+    assert out is cfg  # returned unchanged
+    assert out.project_root == "/explicit/store"
+
+
+def test_fill_data_root_leaves_path_config_untouched():
+    cfg = DataConfig(path="some.npz")
+    out = paths.fill_data_root(cfg)
+    assert out is cfg  # not copied, not filled
+    assert out.project_root is None
+    # The fill must not introduce a double-selection ("not both") error.
+    assert out.resolve_path() == Path("some.npz")

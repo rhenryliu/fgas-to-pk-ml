@@ -13,7 +13,9 @@ profile products written by `SimulationStacker` and produces model-ready
 training data.
 
 The library is the installed `fgas_spk` package (distribution name
-`fgas-to-pk-ml`, src layout under `src/`, `pip install -e .`). Its modules:
+`fgas-to-pk-ml`, src layout under `src/`, `pip install -e .`). It has two layers.
+
+**Data-assembly core** (imports only numpy + pyyaml):
 
 - `src/fgas_spk/schema.py` — the on-disk data contract and **single source of
   truth**: the `FgasSpkDataset` container, the filename/directory convention,
@@ -27,16 +29,46 @@ The library is the installed `fgas_spk` package (distribution name
   dataset and serve model-ready numpy arrays per a `DataConfig`. numpy + pyyaml
   only (no torch); runnable as a CLI dry-run (`python -m fgas_spk.loader`).
 - `src/fgas_spk/__init__.py` — re-exports the common API as a flat `fgas_spk.*`
-  surface (the schema names, the builders, and the loader's `DataConfig` /
-  `load_training_data`).
-- `src/_frozen/fgas_spk_dataset_v0.py` — a **frozen, pre-refactor backup** of the
-  loader, quarantined outside the package (no `__init__.py`), kept only because
-  callers may still source it; do not extend or fix it — all changes go to the
-  three maintained modules above.
+  surface (the schema names, the builders, the loader's `DataConfig` /
+  `load_training_data`, and the experiment's `RunConfig`/`SplitSpec`/
+  `load_configs`). Importing the top-level package stays numpy + pyyaml — it
+  does not pull the heavier training submodules below.
+
+**Training / experiment layer** (opt-in; the models and runner pull scikit-learn,
+joblib, and lazily torch/matplotlib from the pinned environment — import these
+explicitly):
+
+- `src/fgas_spk/paths.py` — machine- and layout-aware path resolution:
+  `resolve_data_root` (reads — defaults to the repo), `resolve_scratch_root`
+  (writes — no default; raises unless `$FGAS_SCRATCH_ROOT` is set or a root is
+  passed), `repo_root`, `figure_dir`, and the `fill_data_root` entry-point
+  helper. No hardcoded paths, no filesystem detection, no username in code. A
+  leaf module: it never imports the rest of the package at runtime.
+- `src/fgas_spk/experiment.py` — the trainer-side `RunConfig` (model + training
+  fields **only**, no data selection), the grouped-by-`sim_index` `SplitSpec`,
+  and `load_configs` (reads the data YAML and run YAML independently — no merge).
+- `src/fgas_spk/models/` — the model-plugin layer: the `ProfileToSpk` interface,
+  the name→class `REGISTRY`, and the `register` decorator (`base.py`), plus the
+  `pca_linear` reference plugin. Importing the package runs each plugin's
+  `@register` for its side effect; add new plugins' imports to its `__init__`.
+- `src/fgas_spk/run_record.py` — the git-tracked text record + ledger for a run:
+  writes `experiments/runs/<run_id>/` and appends to `experiments/runs.jsonl`.
+  Never imports torch (the device string is passed in). Holds
+  `DEFAULT_SUPPRESSION_DEFINITION`, the recorded suppression-target string.
+- `src/fgas_spk/train.py` — the end-to-end runner (`run_training`): a
+  `(DataConfig, RunConfig)` pair → read-root fill → grouped split → fit a model
+  from the registry → write the run record, checkpoint to scratch, and a
+  diagnostic figure. Resolves no physics choice (rule 3); records provenance.
+
+**Backup** (do not extend or fix): `src/_frozen/fgas_spk_dataset_v0.py` — a
+**frozen, pre-refactor backup** of the loader, quarantined outside the package
+(no `__init__.py`), kept only because callers may still source it; all changes go
+to the maintained modules above.
 
 A copy of the collaborator-authored reference notebook lives at
-`notebooks/test_CAMELS_sixth_gen.ipynb`. It is provenance, not the source of
-truth — the library is the corrected, maintained version of its loading logic.
+`notebooks/test_CAMELS_sixth_gen.ipynb` (and a scratch loader notebook at
+`notebooks/test_loader.ipynb`). These are provenance, not the source of truth —
+the library is the corrected, maintained version of their loading logic.
 
 ## How to work here
 
@@ -85,10 +117,15 @@ without explicit permission*):
   cross-platform in the meantime.
 - Bumping a pin is a deliberate, reviewed edit, not a side effect of reinstalling —
   consistent with the gated workflow.
-- The library's own import surface is only numpy + pyyaml (+ stdlib). The cosmology/ML
-  pins (pyccl, colossus, SP(k)/BCemu, scikit-learn, torch/sbi, pandas, astropy, pypower,
-  corner, getdist, …) are for gate, analysis, and training scripts, not the data-assembly
-  modules.
+- The package is tiered by import weight. The **data-assembly core** and the
+  **flat API** (`import fgas_spk`, plus `schema`/`builder`/`loader`/`experiment`) import
+  only numpy + pyyaml (+ stdlib) — keep them that way. The **opt-in training submodules**
+  may pull more: `fgas_spk.models` and `fgas_spk.train` use scikit-learn and joblib, and
+  `train` imports torch and matplotlib lazily (both optional); `fgas_spk.run_record` stays
+  light (numpy + stdlib). Only the core's two deps are declared in `pyproject.toml`; the
+  rest live in the env files. The wider cosmology/ML pins (pyccl, colossus, SP(k)/BCemu,
+  torch/sbi, pandas, astropy, pypower, corner, getdist, …) are for gate, analysis, and
+  training scripts, not the data-assembly modules.
 
 ## Binding rules
 
@@ -105,9 +142,12 @@ without explicit permission*):
    silent default. This is a hard rule for this project.
 5. **Judge code on merit.** When comparing implementations, evaluate the code
    itself, not who wrote it. Flag the maintainer's own mistakes too.
-6. **The scratch store is data-only.** Datasets and large model checkpoints go to
-   the scratch `project_root`; configs, figures, READMEs, and docs stay in this
-   git-tracked repo.
+6. **The scratch store is data-only.** Outputs split three ways by size and
+   provenance: large artifacts (datasets and model checkpoints) go to the scratch root
+   (`$FGAS_SCRATCH_ROOT`); the small text run records go to the git-tracked
+   `experiments/` tree; configs, READMEs, and docs stay in this git-tracked repo.
+   Generated figures go to a `figures/` tree under the repo that is **gitignored** —
+   regenerated, not version-controlled. Do not write large artifacts into the repo.
 
 ## Known landmines (verified context, not speculation)
 
@@ -140,18 +180,35 @@ without explicit permission*):
 
 ## Data store layout
 
+Scratch store (`$FGAS_SCRATCH_ROOT`) — large artifacts only:
+
 ```
-<project_root>/datasets/<suite>/snap<NNN>_z<z>/src-<source>/
+<scratch_root>/datasets/<suite>/snap<NNN>_z<z>/src-<source>/
     fgas_spk__<suite>__snap<NNN>_z<z>__src-<source>__rank-<rank>__<tag>.npz
     fgas_spk__...__<tag>.yaml
-<project_root>/models/
+<scratch_root>/models/<run_id>/model.joblib        # one checkpoint dir per run
 ```
 
-`save_dataset` builds these paths; never hardcode them elsewhere. Set
+`save_dataset` builds the dataset paths; never hardcode them elsewhere. Set
 `source`, `provenance`, and `notes` honestly (e.g. `source="lindajin"` with a
 provenance note when data derives from the fork; `source="rhliu"` for
 self-generated). `save_dataset` refuses to overwrite by default — change `tag`
 or pass `overwrite=True` deliberately.
+
+Git-tracked run records — small text only, written by `fgas_spk.run_record`:
+
+```
+<repo>/experiments/runs/<run_id>/
+    config_data.yaml   config_run.yaml   env.json   metrics.jsonl   summary.json
+<repo>/experiments/runs.jsonl                      # one greppable ledger line per run
+```
+
+`run_id = "<UTC-timestamp>__<config-hash8>__<git-sha7>"` (config hash over the
+resolved `(DataConfig, RunConfig)` pair; git sha of `HEAD` with a dirty flag).
+`env.json` captures the dataset `__meta__`, the roots, package versions, and the
+suppression-target definition verbatim, so runs against different targets are
+never silently compared. Build these paths via `paths.repo_root` /
+`run_record.write_run_record`; do not hardcode them.
 
 ## Verification expectations
 
@@ -165,7 +222,11 @@ Before reporting a change as done:
 
 ## Out of scope without explicit request
 
-Training-loop code, model architectures, environment changes, regenerating
-profiles, and any rewrite of the upstream `SimulationStacker` belong to separate,
-explicitly-requested tasks. Keep changes here scoped to data assembly, storage,
-and their tests.
+A thin **reference** training layer now lives in the repo (the `pca_linear`
+reference model, the `run_training` runner, and the run-record machinery) — it
+exists to demonstrate the `ProfileToSpk` interface and the recorded-run workflow,
+not as a modelling effort. Still out of scope without an explicit request: real
+model architectures and hyperparameter tuning, new training loops beyond the
+reference runner, environment changes, regenerating profiles, and any rewrite of
+the upstream `SimulationStacker`. Keep changes scoped to data assembly, storage,
+the reference training layer, and their tests.

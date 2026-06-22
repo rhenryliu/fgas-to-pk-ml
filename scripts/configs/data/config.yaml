@@ -12,7 +12,9 @@
 # (-> $FGAS_DATA_ROOT, else the repo, where the datasets are git-tracked). The
 # runner fills it before the loader runs. Set an explicit path, or pass
 # --data-root, to read datasets from elsewhere (e.g. a scratch store).
-project_root: null
+# project_root: null
+# project_root: /Users/hliu/projects/repos/fgas-to-pk-ml/ # local
+project_root: /pscratch/sd/r/rhliu/projects/fgas-to-pk-ml/ # NERSC Perlmutter
 suite: CAMELS-IllustrisTNG-L50n512-SB35
 snapshot: 74
 redshift: 0.47

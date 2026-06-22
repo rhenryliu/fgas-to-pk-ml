@@ -25,6 +25,7 @@
 numpy==2.4.6
 scipy==1.17.1
 scikit-learn==1.9.0    # PCA, GP regression, GroupKFold (split-by-sim)
+joblib==1.5.3          # fgas_spk.train imports it directly to checkpoint the sklearn model (else only transitive via scikit-learn)
 h5py==3.16.0           # read CAMELS HDF5 group catalogues (e.g. stellar-mass re-rank)
 pandas==3.0.3          # CAMELS Sobol param matrix + results tables (pandas 3.x; 2.x is the conservative fallback)
 astropy==7.0.0         # FITS I/O for obs data (HSC/DESI/ACT), units, constants
