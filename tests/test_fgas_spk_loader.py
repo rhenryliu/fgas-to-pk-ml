@@ -239,6 +239,31 @@ def test_bad_target_mode_raises():
         L.DataConfig(target_mode="nonsense")
 
 
+def test_k_range_with_non_k_range_mode_raises():
+    # k_range set under target_mode='curve' is contradictory: the k-field would
+    # be silently ignored. Fail at construction.
+    with pytest.raises(ValueError, match="k_range"):
+        L.DataConfig(target_mode="curve", k_range=(0.5, 5.0))
+
+
+def test_k_range_with_single_k_mode_raises():
+    # k_range contradicts single_k even when k_target is also supplied.
+    with pytest.raises(ValueError, match="k_range"):
+        L.DataConfig(target_mode="single_k", k_target=3.0, k_range=(0.5, 5.0))
+
+
+def test_k_target_with_non_single_k_mode_raises():
+    with pytest.raises(ValueError, match="k_target"):
+        L.DataConfig(target_mode="curve", k_target=3.0)
+
+
+def test_valid_target_mode_k_field_combinations_construct():
+    # The three consistent combinations must build without error.
+    assert L.DataConfig(target_mode="curve").k_range is None
+    assert L.DataConfig(target_mode="k_range", k_range=(0.5, 5.0)).k_target is None
+    assert L.DataConfig(target_mode="single_k", k_target=3.0).k_range is None
+
+
 def test_single_k_empty_k_raises(tmp_path):
     ds = _make_dataset(with_params=False)
     ds.k = np.array([])                                  # no k bins

@@ -152,9 +152,8 @@ class DataConfig:
 
     def __post_init__(self) -> None:
         # YAML round-trips tuples as lists; restore them so downstream code can
-        # rely on the declared types. Validation of presence/consistency is done
-        # at load time (see `load_training_data`) so deserialization never fails
-        # spuriously on a partially-filled config.
+        # rely on the declared types. Coerce before the consistency checks below
+        # so any error message prints a clean tuple rather than the raw list.
         if self.radial_range_mpch is not None:
             self.radial_range_mpch = tuple(self.radial_range_mpch)  # type: ignore[assignment]
         if self.k_range is not None:
@@ -163,6 +162,23 @@ class DataConfig:
             raise ValueError(
                 f"target_mode must be one of {_TARGET_MODES}, got "
                 f"{self.target_mode!r}."
+            )
+        # Reject contradictory target_mode / k-field combinations at construction.
+        # A k-field that does not apply to the active target_mode is silently
+        # ignored downstream, so the run proceeds against a different target than
+        # the config appears to specify -- fail loud here instead. The opposite
+        # direction (required-but-missing) is checked in `load_training_data`.
+        if self.k_range is not None and self.target_mode != "k_range":
+            raise ValueError(
+                f"k_range is set but target_mode={self.target_mode!r}; k_range "
+                "only applies to target_mode='k_range'. Set "
+                "target_mode='k_range' or remove k_range."
+            )
+        if self.k_target is not None and self.target_mode != "single_k":
+            raise ValueError(
+                f"k_target is set but target_mode={self.target_mode!r}; k_target "
+                "only applies to target_mode='single_k'. Set "
+                "target_mode='single_k' or remove k_target."
             )
 
     @classmethod
