@@ -18,6 +18,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import time
 
 from fgas_spk.experiment import load_configs
 from fgas_spk.train import run_training
@@ -46,6 +47,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--scratch-root", default=None,
                         help="Override the write root for run outputs.")
     args = parser.parse_args(argv)
+    
+    t0 = time.time()
 
     data_config, run_config = load_configs(args.config_data, args.config_run)
     result = run_training(
@@ -54,11 +57,19 @@ def main(argv: list[str] | None = None) -> int:
         scratch_root_override=args.scratch_root,
     )
 
-    print(f"run_id    : {result.run_id}")
-    print(f"run_dir   : {result.run_dir}")
-    print(f"held-out  : {result.summary['held_out_split']}")
-    print(f"RMSE      : {result.summary['rmse']:.6g}")
-    print(f"checkpoint: {result.checkpoint_path}")
+    print(f"run_id      : {result.run_id}")
+    print(f"run_dir     : {result.run_dir}")
+    print(f"held-out    : {result.summary['held_out_split']}")
+    print(f"Train RMSE  : {result.summary['train_rmse']:.6g}")
+    try:
+        print(f"Val RMSE    : {result.summary['val_rmse']:.6g}")
+    except KeyError:
+        print("Val RMSE    : <no val split>")
+    print(f"Test RMSE   : {result.summary['rmse']:.6g}")
+    print(f"checkpoint  : {result.checkpoint_path}")
+    print(f"Elapsed time: {time.time() - t0:.2f} seconds")
+    
+    # print(result.summary)
     return 0
 
 

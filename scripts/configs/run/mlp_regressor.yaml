@@ -1,8 +1,8 @@
-# RunConfig for the PCA API-reference model (fgas_spk.models.pca_linear).
+# RunConfig for the MLP regressor model (fgas_spk.models.mlp_regressor).
 # Pair this with a DataConfig (e.g. scripts/configs/data/config.yaml) and run:
 #
 #     python scripts/run.py --config-data scripts/configs/data/config.yaml \
-#                           --config-run  scripts/configs/run/pca_reference.yaml
+#                           --config-run  scripts/configs/run/mlp_regressor.yaml
 #
 # or the worked example: python scripts/run_pca_demo.py
 
@@ -10,18 +10,18 @@ model: mlp_regressor          # registry name (fgas_spk.models.REGISTRY)
 model_params:
   latent_dim: 4
   hidden: 256
-  n_layers: 2
+  n_layers: 8
   epochs: 200
   lr: 1.0e-3
-  weight_decay: 0.0
+  weight_decay: 0.05
   batch_size: 128
  
-seed: 0                    # reproducibility seed (threaded into PCA random_state)
+seed: 0                    # reproducibility seed (threaded into random_state)
 
 # Grouped-by-sim_index split. val_frac: 0.0 means a two-way train/test split.
 split:
-  train_frac: 0.8
-  val_frac: 0.0
+  train_frac: 0.7
+  val_frac: 0.1
   test_frac: 0.2
   seed: 0
 

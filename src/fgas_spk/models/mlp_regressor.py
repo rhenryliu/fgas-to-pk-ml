@@ -4,29 +4,36 @@ This is the **supervised skeleton** the later conditional VAE (CVAE) inherits, s
 the bottleneck is mandatory and central, not incidental. The architecture is an
 encoder/decoder pair around a narrow deterministic latent:
 
-1. **encoder** maps ``concat(X, X_cond)`` to a latent of size ``latent_dim``
-   (default 4). ``X`` is the f_gas(R) profile; the conditioning scalars
-   ``X_cond`` (number density, optional mean halo mass) are concatenated to the
-   input exactly as :mod:`~fgas_spk.models.pca_linear` concatenates them. With
-   ``X_cond=None`` the encoder reads the profile alone.
-2. **decoder** maps ``concat(latent, X_cond)`` to the SP(k) target of width
-   ``n_k``. The decoder is conditioned on ``X_cond`` too -- mirroring the Lin
-   et al. trick of conditioning the decoder on cosmology -- so the latent is
-   pushed to carry feedback information rather than re-encoding the number
-   density. With ``X_cond=None`` the decoder reads the latent alone.
+The conditioning *context* is whichever of two optional modalities are present:
+``X_cond`` (observable scalars -- number density, optional mean halo mass) and
+``X_params`` (the simulation's CAMELS parameters). Each is standardised on its own
+scale and the two are concatenated into a single context vector; both are wired in
+identically, so ``X_params`` is used exactly as ``X_cond`` is.
+
+1. **encoder** maps ``concat(X, context)`` to a latent of size ``latent_dim``
+   (default 4). ``X`` is the f_gas(R) profile; the conditioning context is
+   concatenated to the input exactly as :mod:`~fgas_spk.models.pca_linear`
+   concatenates ``X_cond``. With no conditioning the encoder reads the profile
+   alone.
+2. **decoder** maps ``concat(latent, context)`` to the SP(k) target of width
+   ``n_k``. The decoder is conditioned on the context too -- mirroring the Lin
+   et al. trick of conditioning the decoder on cosmology (the CAMELS parameters
+   make that literal) -- so the latent is pushed to carry the residual feedback
+   information rather than re-encoding the number density or the known
+   parameters. With no conditioning the decoder reads the latent alone.
 
 The latent is a *plain deterministic bottleneck*: there is no sampling here. The
 stochastic latent is the CVAE's job in the next plugin; this model is the
 point-prediction skeleton it builds on.
 
-**Normalisation.** Raw f_gas and SP(k) live on very different scales, so the
-regressor standardises internally. At :meth:`fit` time it fits a per-column mean
-and standard deviation on the training batch for the profile ``X``, the
-conditioning ``X_cond`` (if present), and the target ``y``; the network sees and
-predicts standardised quantities, and :meth:`predict` inverts the target
-standardisation on the way out. The stored statistics are reused at predict time
-so callers always pass and receive raw-scale arrays. Zero-variance columns are
-given unit scale to avoid division by zero.
+**Normalisation.** Raw f_gas, SP(k), and the conditioning modalities live on very
+different scales, so the regressor standardises internally. At :meth:`fit` time it
+fits a per-column mean and standard deviation on the training batch for the
+profile ``X``, each conditioning modality present (``X_cond`` and ``X_params``),
+and the target ``y``; the network sees and predicts standardised quantities, and
+:meth:`predict` inverts the target standardisation on the way out. The stored
+statistics are reused at predict time so callers always pass and receive raw-scale
+arrays. Zero-variance columns are given unit scale to avoid division by zero.
 
 **Determinism.** :meth:`fit` seeds torch via :func:`torch.manual_seed`, which
 gives run-to-run stability on a *fixed* backend (same machine, same device). It
@@ -133,12 +140,15 @@ class MlpRegressor:
         self._decoder = None
         self._device = None
         self._uses_cond: bool = False
+        self._uses_params: bool = False
         self._y_was_1d: bool = False
         # Standardisation statistics, fitted on the train batch in fit.
         self._x_mean: np.ndarray | None = None
         self._x_std: np.ndarray | None = None
         self._cond_mean: np.ndarray | None = None
         self._cond_std: np.ndarray | None = None
+        self._params_mean: np.ndarray | None = None
+        self._params_std: np.ndarray | None = None
         self._y_mean: np.ndarray | None = None
         self._y_std: np.ndarray | None = None
 
@@ -147,13 +157,16 @@ class MlpRegressor:
     def fit(self, training_data: "TrainingData") -> None:
         """Fit the encoder/decoder network on a TrainingData bundle.
 
-        Consumes ``training_data.X`` (profiles), ``training_data.X_cond``
-        (conditioning scalars, if present), and ``training_data.y`` (SP(k)
+        Consumes ``training_data.X`` (profiles), ``training_data.y`` (SP(k)
         target, the curve of shape ``(n_examples, n_k)``; a 1-D ``single_k``
-        target is supported and inverted back to 1-D at predict time).
-        ``X_params`` is ignored. Standardisation statistics are fitted here and
-        stored for predict (see the module docstring). torch is imported lazily
-        inside this method.
+        target is supported and inverted back to 1-D at predict time), and --
+        when present -- the two conditioning modalities ``training_data.X_cond``
+        (observable scalars) and ``training_data.X_params`` (CAMELS parameters).
+        Both conditioning modalities are standardised on their own scale and
+        concatenated into one context vector fed to the encoder *and* the decoder;
+        whichever modalities are present at fit are then required at predict.
+        Standardisation statistics are fitted here and stored for predict (see the
+        module docstring). torch is imported lazily inside this method.
 
         Args:
             training_data (TrainingData): The model-ready arrays to fit on.
@@ -164,42 +177,51 @@ class MlpRegressor:
         X = np.asarray(training_data.X, dtype=np.float64)
         y = np.asarray(training_data.y, dtype=np.float64)
         X_cond = training_data.X_cond
+        X_params = training_data.X_params
 
         self._uses_cond = X_cond is not None
         if self._uses_cond:
+            print('Using conditioning scalars (X_cond) in MlpRegressor.fit.')
             X_cond = np.asarray(X_cond, dtype=np.float64)
+
+        self._uses_params = X_params is not None
+        if self._uses_params:
+            X_params = np.asarray(X_params, dtype=np.float64)
 
         # Keep the target 2-D internally; remember a 1-D (single_k) input so the
         # prediction can be squeezed back to the caller's shape.
         self._y_was_1d = y.ndim == 1
         y2d = y[:, None] if self._y_was_1d else y
 
-        # Fit normalisation on the training batch.
+        # Fit normalisation on the training batch (each modality on its own scale).
         self._x_mean, self._x_std = self._fit_norm(X)
         self._y_mean, self._y_std = self._fit_norm(y2d)
         if self._uses_cond:
             self._cond_mean, self._cond_std = self._fit_norm(X_cond)
+        if self._uses_params:
+            self._params_mean, self._params_std = self._fit_norm(X_params)
 
-        # Infer widths from this first batch -- no hardcoded dimensions.
+        # Infer widths from this first batch -- no hardcoded dimensions. X_cond and
+        # X_params are concatenated into one conditioning context of width n_context.
         n_profile = X.shape[1]
         n_cond = X_cond.shape[1] if self._uses_cond else 0
+        n_params = X_params.shape[1] if self._uses_params else 0
+        n_context = n_cond + n_params
         n_k = y2d.shape[1]
 
         # Seed, resolve the device, and build the modules now that dims are known.
         torch.manual_seed(self.seed)
         self._device = self._resolve_device()
-        self._build_modules(n_profile, n_cond, n_k)
+        self._build_modules(n_profile, n_context, n_k)
         self._encoder.to(self._device)
         self._decoder.to(self._device)
 
-        # Standardise and move to the device as float32 tensors.
+        # Standardise and move to the device as float32 tensors. The conditioning
+        # tensor is the standardised [X_cond | X_params] context (None if neither).
         Xs = self._to_tensor(self._apply_norm(X, self._x_mean, self._x_std))
         ys = self._to_tensor(self._apply_norm(y2d, self._y_mean, self._y_std))
-        conds = (
-            self._to_tensor(self._apply_norm(X_cond, self._cond_mean, self._cond_std))
-            if self._uses_cond
-            else None
-        )
+        context = self._context(X_cond, X_params)
+        conds = self._to_tensor(context) if context is not None else None
 
         params = list(self._encoder.parameters()) + list(self._decoder.parameters())
         if self.weight_decay > 0:
@@ -245,16 +267,18 @@ class MlpRegressor:
         """Predict SP(k) for profiles ``X`` (the deterministic point prediction).
 
         numpy in, torch on the device, forward pass, numpy out, with the target
-        standardisation inverted. The modality must match :meth:`fit`: if the
-        model was fit with conditioning, ``X_cond`` is required, and vice versa.
+        standardisation inverted. The conditioning modalities must match
+        :meth:`fit`: whichever of ``X_cond`` / ``X_params`` were used at fit are
+        required here, and ones unused at fit must stay None.
 
         Args:
             X (np.ndarray): Gas-fraction profiles, shape (n_examples, n_radii).
-            X_cond (np.ndarray | None): Conditioning scalars, shape
+            X_cond (np.ndarray | None): Observable conditioning scalars, shape
                 (n_examples, n_cond). Required iff the model was fit with
-                conditioning. Defaults to None.
-            X_params (np.ndarray | None): Ignored by this model (the CVAE
-                successor may use it). Defaults to None.
+                ``X_cond``. Defaults to None.
+            X_params (np.ndarray | None): CAMELS parameters, shape
+                (n_examples, n_params). Required iff the model was fit with
+                ``X_params``. Defaults to None.
 
         Returns:
             np.ndarray: Predicted SP(k), shape (n_examples, n_k) for a curve
@@ -262,27 +286,20 @@ class MlpRegressor:
 
         Raises:
             RuntimeError: If called before :meth:`fit`.
-            ValueError: If ``X_cond`` presence does not match how the model was
-                fit (the encoder/decoder input widths would not line up).
+            ValueError: If the presence of ``X_cond`` or ``X_params`` does not
+                match how the model was fit (the input widths would not line up).
         """
         import torch
 
         if self._encoder is None or self._decoder is None:
             raise RuntimeError("MlpRegressor.predict called before fit.")
-        self._check_cond_modality(X_cond)
+        self._check_modality(X_cond, X_params)
 
         x_t = self._to_tensor(
             self._apply_norm(np.asarray(X, dtype=np.float64), self._x_mean, self._x_std)
         )
-        cond_t = None
-        if self._uses_cond:
-            cond_t = self._to_tensor(
-                self._apply_norm(
-                    np.asarray(X_cond, dtype=np.float64),
-                    self._cond_mean,
-                    self._cond_std,
-                )
-            )
+        context = self._context(X_cond, X_params)
+        cond_t = self._to_tensor(context) if context is not None else None
 
         self._encoder.eval()
         self._decoder.eval()
@@ -296,46 +313,46 @@ class MlpRegressor:
         return y
 
     def latents(
-        self, X: np.ndarray, X_cond: np.ndarray | None = None
+        self,
+        X: np.ndarray,
+        X_cond: np.ndarray | None = None,
+        X_params: np.ndarray | None = None,
     ) -> np.ndarray:
         """Return the bottleneck codes for profiles ``X`` (for analysis/plotting).
 
         Not part of the :class:`~fgas_spk.models.base.ProfileToSpk` protocol -- the
         runner never calls it -- but it lets the latent structure be inspected
-        after training. The modality check matches :meth:`predict`.
+        after training. The conditioning modalities must match :meth:`fit`, exactly
+        as in :meth:`predict`.
 
         Args:
             X (np.ndarray): Gas-fraction profiles, shape (n_examples, n_radii).
-            X_cond (np.ndarray | None): Conditioning scalars, shape
+            X_cond (np.ndarray | None): Observable conditioning scalars, shape
                 (n_examples, n_cond). Required iff the model was fit with
-                conditioning. Defaults to None.
+                ``X_cond``. Defaults to None.
+            X_params (np.ndarray | None): CAMELS parameters, shape
+                (n_examples, n_params). Required iff the model was fit with
+                ``X_params``. Defaults to None.
 
         Returns:
             np.ndarray: Bottleneck latent codes, shape (n_examples, latent_dim).
 
         Raises:
             RuntimeError: If called before :meth:`fit`.
-            ValueError: If ``X_cond`` presence does not match how the model was
-                fit.
+            ValueError: If the presence of ``X_cond`` or ``X_params`` does not
+                match how the model was fit.
         """
         import torch
 
         if self._encoder is None:
             raise RuntimeError("MlpRegressor.latents called before fit.")
-        self._check_cond_modality(X_cond)
+        self._check_modality(X_cond, X_params)
 
         x_t = self._to_tensor(
             self._apply_norm(np.asarray(X, dtype=np.float64), self._x_mean, self._x_std)
         )
-        cond_t = None
-        if self._uses_cond:
-            cond_t = self._to_tensor(
-                self._apply_norm(
-                    np.asarray(X_cond, dtype=np.float64),
-                    self._cond_mean,
-                    self._cond_std,
-                )
-            )
+        context = self._context(X_cond, X_params)
+        cond_t = self._to_tensor(context) if context is not None else None
 
         self._encoder.eval()
         with torch.no_grad():
@@ -344,10 +361,15 @@ class MlpRegressor:
 
     # --- internals ---------------------------------------------------------
 
-    def _build_modules(self, n_profile: int, n_cond: int, n_k: int) -> None:
-        """Build the encoder and decoder (torch imported lazily here)."""
-        self._encoder = self._mlp(n_profile + n_cond, self.latent_dim)
-        self._decoder = self._mlp(self.latent_dim + n_cond, n_k)
+    def _build_modules(self, n_profile: int, n_context: int, n_k: int) -> None:
+        """Build the encoder and decoder (torch imported lazily here).
+
+        ``n_context`` is the combined width of the conditioning modalities
+        (``X_cond`` plus ``X_params``); it widens both the encoder input and the
+        decoder input.
+        """
+        self._encoder = self._mlp(n_profile + n_context, self.latent_dim)
+        self._decoder = self._mlp(self.latent_dim + n_context, n_k)
 
     def _mlp(self, in_dim: int, out_dim: int):
         """Return an ``n_layers``-deep GELU MLP ``in_dim -> hidden... -> out_dim``."""
@@ -381,11 +403,15 @@ class MlpRegressor:
         import torch
 
         if self.device is not None:
+            print(f"Using user-specified device '{self.device}' for MlpRegressor.")
             return torch.device(self.device)
         if torch.cuda.is_available():
+            print("Using CUDA device for MlpRegressor.")
             return torch.device("cuda")
         if torch.backends.mps.is_available():
+            print("Using MPS device for MlpRegressor.")
             return torch.device("mps")
+        print("Using CPU device for MlpRegressor.")
         return torch.device("cpu")
 
     def _to_tensor(self, a: np.ndarray):
@@ -396,8 +422,49 @@ class MlpRegressor:
             self._device
         )
 
-    def _check_cond_modality(self, X_cond: np.ndarray | None) -> None:
-        """Raise if ``X_cond`` presence does not match how the model was fit."""
+    def _context(
+        self, X_cond: np.ndarray | None, X_params: np.ndarray | None
+    ) -> np.ndarray | None:
+        """Standardise and concatenate the conditioning modalities into one array.
+
+        Returns the ``[X_cond | X_params]`` context (each modality standardised
+        with its stored statistics) fed to both the encoder and the decoder, or
+        None if neither modality is in use. Presence is assumed already validated
+        by :meth:`_check_modality`.
+
+        Args:
+            X_cond (np.ndarray | None): Observable conditioning scalars, or None.
+            X_params (np.ndarray | None): CAMELS parameters, or None.
+
+        Returns:
+            np.ndarray | None: The standardised context, shape
+                (n_examples, n_context), or None.
+        """
+        blocks = []
+        if self._uses_cond:
+            blocks.append(
+                self._apply_norm(
+                    np.asarray(X_cond, dtype=np.float64),
+                    self._cond_mean,
+                    self._cond_std,
+                )
+            )
+        if self._uses_params:
+            blocks.append(
+                self._apply_norm(
+                    np.asarray(X_params, dtype=np.float64),
+                    self._params_mean,
+                    self._params_std,
+                )
+            )
+        if not blocks:
+            return None
+        return np.hstack(blocks)
+
+    def _check_modality(
+        self, X_cond: np.ndarray | None, X_params: np.ndarray | None
+    ) -> None:
+        """Raise if X_cond / X_params presence does not match how the model was fit."""
         if self._uses_cond and X_cond is None:
             raise ValueError(
                 "This model was fit with conditioning (X_cond); predict/latents "
@@ -405,8 +472,18 @@ class MlpRegressor:
             )
         if not self._uses_cond and X_cond is not None:
             raise ValueError(
-                "This model was fit profile-only but X_cond was given. Pass "
+                "This model was fit without X_cond but X_cond was given. Pass "
                 "X_cond=None to match the fitted modality."
+            )
+        if self._uses_params and X_params is None:
+            raise ValueError(
+                "This model was fit with CAMELS parameters (X_params); "
+                "predict/latents requires X_params as well."
+            )
+        if not self._uses_params and X_params is not None:
+            raise ValueError(
+                "This model was fit without X_params but X_params was given. Pass "
+                "X_params=None to match the fitted modality."
             )
 
     @staticmethod

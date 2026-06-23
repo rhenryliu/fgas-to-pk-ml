@@ -31,11 +31,11 @@ sim_ids: null
 # --- Inputs / features ---
 number_density_indices: [2]   # null = all five number densities
 radial_range_mpch: null        # null = full radial range; e.g. [0.1, 2.0] to crop (Mpc/h)
-include_nd_feature: true       # number density -> X_cond
+include_nd_feature: false       # number density -> X_cond
 include_mean_halo_mass: false  # stack's mean M_500c [M_sun/h] -> X_cond
-include_camels_params: true    # CAMELS params -> X_params (on by default; raises if the dataset lacks them)
+include_camels_params: false    # CAMELS params -> X_params (on by default; raises if the dataset lacks them)
 
 # --- Target ---
 target_mode: curve   # one of: curve | single_k | k_range
 k_target: null       # required for single_k (nearest-k bin), in h/Mpc
-k_range: null        # required for k_range, e.g. [0.5, 5.0] (inclusive), in h/Mpc
+k_range: [0.5, 5.0]        # required for k_range, e.g. [0.5, 5.0] (inclusive), in h/Mpc

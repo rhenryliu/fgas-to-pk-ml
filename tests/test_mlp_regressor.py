@@ -32,9 +32,11 @@ from fgas_spk.models.mlp_regressor import MlpRegressor
 
 def _training_data(
     with_cond: bool = True,
+    with_params: bool = False,
     n: int = 30,
     n_radii: int = 6,
     n_cond: int = 2,
+    n_params: int = 3,
     n_k: int = 5,
     seed: int = 0,
 ) -> TrainingData:
@@ -43,7 +45,7 @@ def _training_data(
     return TrainingData(
         X=rng.random((n, n_radii)),
         X_cond=rng.random((n, n_cond)) if with_cond else None,
-        X_params=None,
+        X_params=rng.random((n, n_params)) if with_params else None,
         y=rng.random((n, n_k)),
         nd=rng.random(n),
         sim_index=np.arange(n),
@@ -119,6 +121,51 @@ def test_fit_predict_profile_only_shapes():
     assert z.shape == (td.X.shape[0], 3)
 
 
+def test_fit_predict_latents_with_cond_and_params_shapes():
+    # Both conditioning modalities present: X_params used just like X_cond.
+    td = _training_data(
+        with_cond=True, with_params=True, n=24, n_radii=6, n_cond=2,
+        n_params=3, n_k=5,
+    )
+    model = MlpRegressor(
+        latent_dim=4, hidden=16, n_layers=1, epochs=3, batch_size=8,
+        seed=0, device="cpu",
+    )
+    model.fit(td)
+    pred = model.predict(td.X, td.X_cond, td.X_params)
+    assert pred.shape == td.y.shape
+    z = model.latents(td.X, td.X_cond, td.X_params)
+    assert z.shape == (td.X.shape[0], 4)
+
+
+def test_params_only_path_shapes():
+    # X_params present, X_cond absent: the param modality alone conditions the net.
+    td = _training_data(with_cond=False, with_params=True, n=24, n_k=5)
+    model = MlpRegressor(
+        latent_dim=3, hidden=16, n_layers=1, epochs=3, batch_size=8,
+        seed=0, device="cpu",
+    )
+    model.fit(td)
+    pred = model.predict(td.X, X_params=td.X_params)
+    assert pred.shape == td.y.shape
+    z = model.latents(td.X, X_params=td.X_params)
+    assert z.shape == (td.X.shape[0], 3)
+
+
+def test_params_actually_influence_prediction():
+    # Changing X_params must change the prediction -- proof the parameter modality
+    # is wired into the forward pass, not silently dropped.
+    td = _training_data(with_cond=False, with_params=True, n=24, n_k=5, seed=5)
+    model = MlpRegressor(
+        latent_dim=4, hidden=16, n_layers=2, epochs=20, batch_size=8,
+        seed=0, device="cpu",
+    )
+    model.fit(td)
+    p0 = model.predict(td.X, X_params=td.X_params)
+    p1 = model.predict(td.X, X_params=td.X_params + 1.0)
+    assert not np.allclose(p0, p1)
+
+
 # --- guards ----------------------------------------------------------------
 
 def test_predict_before_fit_raises():
@@ -155,6 +202,31 @@ def test_predict_profile_only_rejects_cond():
     model.fit(td)
     with pytest.raises(ValueError, match="X_cond"):
         model.predict(td.X, X_cond=np.zeros((td.X.shape[0], 2)))
+
+
+def test_predict_params_modality_must_match_fit():
+    # Fit with X_params, then predict without it -> input widths would not line
+    # up, so this must raise rather than silently mispredict.
+    td = _training_data(with_cond=True, with_params=True, n=16)
+    model = MlpRegressor(
+        latent_dim=3, hidden=16, n_layers=1, epochs=2, batch_size=8,
+        seed=0, device="cpu",
+    )
+    model.fit(td)
+    with pytest.raises(ValueError, match="X_params"):
+        model.predict(td.X, td.X_cond)  # X_params omitted
+
+
+def test_predict_rejects_unfit_params():
+    # Fit without X_params, then predict with it -> must raise.
+    td = _training_data(with_cond=True, with_params=False, n=16)
+    model = MlpRegressor(
+        latent_dim=3, hidden=16, n_layers=1, epochs=2, batch_size=8,
+        seed=0, device="cpu",
+    )
+    model.fit(td)
+    with pytest.raises(ValueError, match="X_params"):
+        model.predict(td.X, td.X_cond, X_params=np.zeros((td.X.shape[0], 3)))
 
 
 # --- learning + determinism ------------------------------------------------
