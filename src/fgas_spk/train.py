@@ -147,6 +147,7 @@ def _subset(td: TrainingData, mask: np.ndarray) -> TrainingData:
         k=td.k,
         radii_mpch=td.radii_mpch,
         source_path=td.source_path,
+        param_names=td.param_names,
         meta=td.meta,
         config=td.config,
     )

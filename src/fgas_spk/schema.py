@@ -28,6 +28,10 @@ from pathlib import Path
 
 import numpy as np
 
+# The parameter-name registry is a zero-dependency leaf; importing it keeps the
+# schema's numpy + pyyaml import surface unchanged.
+from fgas_spk.camels_params import param_names_for
+
 try:  # YAML is only needed for the human-readable sidecar manifest.
     import yaml  # type: ignore
     _HAS_YAML = True
@@ -71,6 +75,12 @@ class FgasSpkDataset:
             simulation, shape (n_sims, n_params), aligned with ``sim_ids``. None
             unless a ``params_path`` was supplied. Intended as a held-out
             diagnostic (e.g. residual-vs-parameter checks), not a core feature.
+        camels_param_names (tuple[str, ...], optional): Physical names of the
+            ``camels_params`` columns, in column order, length ``n_params``.
+            Stamped by :func:`save_dataset` from
+            :data:`fgas_spk.camels_params.CAMELS_PARAM_NAMES` so the labels travel
+            with the data; None for datasets saved without stamping (the loader
+            then falls back to the registry keyed by ``suite``).
         snapshot (int, optional): Snapshot the dataset was built for (e.g. 74 ->
             z=0.47, 82 -> z=0.21). Populated by the loaders so the redshift is
             carried with the data; None for datasets assembled without it.
@@ -86,6 +96,7 @@ class FgasSpkDataset:
     mean_halo_mass: np.ndarray
     rank_key: str = "halo_mass"
     camels_params: np.ndarray | None = None
+    camels_param_names: tuple[str, ...] | None = None
     snapshot: int | None = None
 
     def to_training_arrays(
@@ -288,6 +299,7 @@ def save_dataset(
     provenance: dict | None = None,
     notes: str | None = None,
     manifest_dir: str | Path | None = None,
+    stamp_param_names: bool = True,
 ) -> Path:
     """Write a dataset to the scratch store under a consistent, self-describing name.
 
@@ -320,13 +332,25 @@ def save_dataset(
             sidecar. If None (default), the sidecar is written beside the
             ``.npz`` in the dataset bucket. Pass a git-tracked path to keep the
             manifest under version control instead.
+        stamp_param_names (bool, optional): If True (default) and the dataset
+            carries ``camels_params``, stamp the column names for ``suite`` from
+            :data:`fgas_spk.camels_params.CAMELS_PARAM_NAMES` into the ``.npz``
+            (and ``__meta__``), so the labels travel with the data. The name count
+            must match the parameter count or this raises. With no
+            ``camels_params`` there is nothing to stamp and the flag is a no-op.
+            Set False to save a param matrix without stamping names (the loader
+            then falls back to the registry by ``suite``).
 
     Returns:
         Path: Path to the written ``.npz``.
 
     Raises:
         FileExistsError: If the target exists and ``overwrite`` is False.
-        ValueError: If ``snapshot`` contradicts a non-None ``dataset.snapshot``.
+        ValueError: If ``snapshot`` contradicts a non-None ``dataset.snapshot``,
+            or if ``stamp_param_names`` is requested but the registered name count
+            for ``suite`` does not match the parameter-matrix column count.
+        KeyError: If ``stamp_param_names`` is requested for a ``suite`` with no
+            registered name list.
     """
     if dataset.snapshot is not None and dataset.snapshot != snapshot:
         raise ValueError(
@@ -360,8 +384,27 @@ def save_dataset(
         "sim_ids": dataset.sim_ids,
         "mean_halo_mass": dataset.mean_halo_mass,
     }
+    # Resolve the parameter-name labels to stamp alongside the matrix, so the
+    # labels travel with the data. Index-based selection never needs these; they
+    # exist for name-based selection and self-describing provenance. Prefer names
+    # already on the dataset; otherwise pull them from the suite registry.
+    param_names: tuple[str, ...] | None = None
     if dataset.camels_params is not None:
         arrays["camels_params"] = dataset.camels_params
+        if stamp_param_names:
+            n_params = int(dataset.camels_params.shape[1])
+            param_names = (
+                tuple(dataset.camels_param_names)
+                if dataset.camels_param_names is not None
+                else param_names_for(suite)
+            )
+            if len(param_names) != n_params:
+                raise ValueError(
+                    f"stamp_param_names: {len(param_names)} names registered for "
+                    f"suite {suite!r} but camels_params has {n_params} columns. "
+                    "Fix the registry entry or pass stamp_param_names=False."
+                )
+            arrays["camels_param_names"] = np.asarray(param_names, dtype="U")
 
     meta = {
         "schema_version": SCHEMA_VERSION,
@@ -392,6 +435,10 @@ def save_dataset(
         "provenance": provenance or {},
         "notes": notes or "",
     }
+    # Record the stamped parameter-column names in the human-readable meta only
+    # when present, so param-less / unstamped datasets keep the frozen meta keys.
+    if param_names is not None:
+        meta["camels_param_names"] = list(param_names)
 
     np.savez(npz_path, __meta__=json.dumps(meta), **arrays)
     # Always write the human-readable sidecar; metadata also lives inside the
@@ -426,6 +473,11 @@ def load_dataset(npz_path: str | Path) -> FgasSpkDataset:
         mean_halo_mass=data["mean_halo_mass"],
         rank_key=meta.get("rank_key", "unknown"),
         camels_params=data["camels_params"] if "camels_params" in data else None,
+        camels_param_names=(
+            tuple(str(s) for s in data["camels_param_names"])
+            if "camels_param_names" in data
+            else None
+        ),
         snapshot=meta.get("snapshot"),
     )
 

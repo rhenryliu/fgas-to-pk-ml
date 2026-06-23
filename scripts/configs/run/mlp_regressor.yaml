@@ -10,8 +10,8 @@ model: mlp_regressor          # registry name (fgas_spk.models.REGISTRY)
 model_params:
   latent_dim: 4
   hidden: 256
-  n_layers: 8
-  epochs: 400
+  n_layers: 2
+  epochs: 200
   lr: 1.0e-3
   weight_decay: 0.05
   batch_size: 128
@@ -23,7 +23,7 @@ split:
   train_frac: 0.7
   val_frac: 0.1
   test_frac: 0.2
-  seed: 0
+  seed: 100
 
 # Scratch write root. null defers to $FGAS_SCRATCH_ROOT (or --scratch-root).
 write_root: null

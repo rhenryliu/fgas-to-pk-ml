@@ -33,7 +33,13 @@ number_density_indices: [2]   # null = all five number densities
 radial_range_mpch: null        # null = full radial range; e.g. [0.1, 2.0] to crop (Mpc/h)
 include_nd_feature: false       # number density -> X_cond
 include_mean_halo_mass: false  # stack's mean M_500c [M_sun/h] -> X_cond
-include_camels_params: false    # CAMELS params -> X_params (on by default; raises if the dataset lacks them)
+include_camels_params: true    # CAMELS params -> X_params (on by default; raises if the dataset lacks them)
+# Subset which CAMELS parameter columns enter X_params (only when include_camels_params: true).
+# Give indices, names, or both (unioned, de-duplicated, sorted ascending by column); null = all 35.
+# Names resolve against the dataset's stamped names, else the suite registry
+# (fgas_spk.camels_params.CAMELS_PARAM_NAMES). Index selection needs no name list.
+camels_param_indices: null      # e.g. [0, 6, 7]
+camels_param_names: [Omega0, sigma8, OmegaBaryon, HubbleParam, n_s]        # e.g. [Omega0, OmegaBaryon, HubbleParam]
 
 # --- Target ---
 target_mode: k_range   # one of: curve | single_k | k_range

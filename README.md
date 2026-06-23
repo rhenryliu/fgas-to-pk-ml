@@ -228,8 +228,10 @@ fast = F.build_fgas_spk_from_compiled(
 `radii_mpch (n_radii,)`, `number_densities (n_nd,)`, `fgas (n_sims, n_nd, n_radii)`,
 `fgas_std`, `k (n_k,)`, `suppression (n_sims, n_k)`, `sim_ids (n_sims,)`,
 `mean_halo_mass (n_sims, n_nd)`, `rank_key`, optional `camels_params (n_sims, n_params)`,
-and optional `snapshot` (the snapshot the dataset was built for, e.g. 74 → z=0.47;
-populated by the loaders and carried through `save_dataset`/`load_dataset`).
+optional `camels_param_names (n_params,)` (the parameter-column labels stamped by
+`save_dataset`), and optional `snapshot` (the snapshot the dataset was built for,
+e.g. 74 → z=0.47; populated by the loaders and carried through
+`save_dataset`/`load_dataset`).
 Method: `to_training_arrays(k_target=None) -> (X, nd, y)` — an in-memory
 quick-check that emits a `UserWarning`; use `fgas_spk.loader` for training.
 
@@ -269,10 +271,11 @@ cfg = L.DataConfig(
     radial_range_mpch=(0.3, 2.5),       # crop profile radii (None = all)
     include_nd_feature=True,            # number density -> X_cond
     include_camels_params=True,         # CAMELS params -> X_params (on by default)
+    camels_param_names=["Omega0", "HubbleParam"],  # subset of params (None = all 35)
     target_mode="curve",               # or "single_k" (+k_target) / "k_range" (+k_range)
 )
 td = L.load_training_data(cfg)
-# td.y, td.nd, td.sim_index, td.k, td.radii_mpch, td.source_path, td.meta, td.config
+# td.y, td.nd, td.sim_index, td.k, td.radii_mpch, td.param_names, td.source_path, td.meta, td.config
 ```
 
 Inputs are served as **separate modalities** rather than one concatenated array,
@@ -283,11 +286,24 @@ can concatenate them itself):
 | --- | --- | --- | --- |
 | `td.X` | `(n_examples, n_radii_sel)` | the `f_gas(R)` profile alone (columns are `td.radii_mpch`) | — |
 | `td.X_cond` | `(n_examples, n_cond)` | observable-derived scalars: number density (if `include_nd_feature`) then mean `M_500c` (if `include_mean_halo_mass`) | no conditioning feature requested |
-| `td.X_params` | `(n_examples, n_params)` | the simulation's CAMELS parameters, aligned to `td.sim_index` | `include_camels_params=False` |
+| `td.X_params` | `(n_examples, n_params_sel)` | the simulation's CAMELS parameters (the selected subset), aligned to `td.sim_index` | `include_camels_params=False` |
 
 `include_camels_params` defaults to `True`; with it on, a dataset that carries no
 CAMELS params **raises** rather than silently dropping them — set it `False` to
 load a param-less dataset.
+
+**Selecting a subset of CAMELS parameters.** By default all columns of
+`camels_params` enter `X_params`. To train on a subset, set `camels_param_indices`
+(0-based columns), `camels_param_names` (physical names), or both — they are
+unioned, de-duplicated, and ordered ascending by column, so any selection of the
+same physical set yields identical `X_params`. Names resolve against the names
+stamped on the dataset, falling back to a per-suite registry
+(`fgas_spk.camels_params.CAMELS_PARAM_NAMES`, keyed by the dataset's recorded
+`suite`); index selection needs no name list. The selected columns' names are
+exposed as `td.param_names` and recorded in the run's `env.json`. `save_dataset`
+stamps the registry names into new datasets by default (`stamp_param_names=True`),
+so each `.npz` is self-describing; older datasets without stamped names still
+support name selection via the registry.
 
 Each row is one `(simulation, number-density)` pair. `td.sim_index` gives the
 originating simulation id per row so a downstream script can **split by

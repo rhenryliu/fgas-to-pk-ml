@@ -183,6 +183,7 @@ def _save_dataset_with_params(tmp_path: Path, n_sims: int = 10, n_nd: int = 2,
     return S.save_dataset(
         ds, project_root=tmp_path / "data", suite="TESTP",
         snapshot=74, redshift=0.47, source="rhliu", tag="v1",
+        stamp_param_names=False,  # "TESTP" is not a registered suite
     )
 
 

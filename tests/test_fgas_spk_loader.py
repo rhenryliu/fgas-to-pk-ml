@@ -51,9 +51,13 @@ def _make_dataset(with_params: bool = True) -> S.FgasSpkDataset:
 
 
 def _save(tmp_path, with_params: bool = True, tag: str = "v1") -> Path:
+    # "TEST" is intentionally not in the parameter-name registry, so stamping is
+    # opted out here; the dedicated stamping/selection tests below cover the
+    # stamped path with a dataset that carries its own names.
     return S.save_dataset(
         _make_dataset(with_params), project_root=tmp_path, suite="TEST",
         snapshot=74, redshift=0.47, source="rhliu", tag=tag,
+        stamp_param_names=False,
     )
 
 
@@ -352,3 +356,115 @@ def test_cli_honours_data_root_override(tmp_path, monkeypatch, capsys):
     rc = L.main(["--config", str(cfg_path), "--data-root", str(tmp_path)])
     assert rc == 0
     assert "resolved path" in capsys.readouterr().out
+
+
+# --- CAMELS parameter subsetting -------------------------------------------
+
+# Names for the fixture's 4 param columns; carried on the dataset so stamping
+# works for the synthetic "TEST" suite (no registry entry needed). The fixture
+# encodes camels_params[s, c] = 4*s + c, so column values are checkable.
+_PARAM_NAMES = ["alpha", "beta", "gamma", "delta"]
+
+
+def _save_named(tmp_path, tag="vp") -> Path:
+    ds = _make_dataset(with_params=True)
+    ds.camels_param_names = tuple(_PARAM_NAMES)
+    return S.save_dataset(
+        ds, project_root=tmp_path, suite="TEST",
+        snapshot=74, redshift=0.47, source="rhliu", tag=tag,
+    )
+
+
+def _pcfg(npz, **kw):
+    """A single-k config on the named dataset, with nd conditioning off."""
+    return L.DataConfig(path=str(npz), include_nd_feature=False,
+                        target_mode="single_k", k_target=3.0, **kw)
+
+
+def test_all_params_labelled_from_stamped_names(tmp_path):
+    td = L.load_training_data(_pcfg(_save_named(tmp_path)))
+    assert td.X_params.shape == (15, 4)
+    assert td.param_names == _PARAM_NAMES
+
+
+def test_param_index_subset_shape_values_and_names(tmp_path):
+    td = L.load_training_data(_pcfg(_save_named(tmp_path), camels_param_indices=[3, 0]))
+    assert td.X_params.shape == (15, 2)            # sorted -> columns 0, 3
+    assert td.param_names == ["alpha", "delta"]
+    # Row 0 is sim position 0 (camels_params row 0 = [0,1,2,3]); cols 0,3 -> 0,3.
+    np.testing.assert_allclose(td.X_params[0], [0.0, 3.0])
+
+
+def test_param_name_subset(tmp_path):
+    td = L.load_training_data(_pcfg(_save_named(tmp_path), camels_param_names=["delta", "alpha"]))
+    assert td.param_names == ["alpha", "delta"]
+    np.testing.assert_allclose(td.X_params[0], [0.0, 3.0])
+
+
+def test_param_mixed_index_and_name_dedup(tmp_path):
+    # index 3 == "delta"; union collapses, sorts ascending by column.
+    td = L.load_training_data(_pcfg(
+        _save_named(tmp_path), camels_param_indices=[3, 1], camels_param_names=["delta", "alpha"]))
+    assert td.param_names == ["alpha", "beta", "delta"]
+    assert td.X_params.shape == (15, 3)
+
+
+def test_param_subset_out_of_range_raises(tmp_path):
+    with pytest.raises(ValueError, match="out of range"):
+        L.load_training_data(_pcfg(_save_named(tmp_path), camels_param_indices=[4]))
+
+
+def test_param_subset_unknown_name_raises(tmp_path):
+    with pytest.raises(ValueError, match="not found"):
+        L.load_training_data(_pcfg(_save_named(tmp_path), camels_param_names=["nope"]))
+
+
+def test_param_subset_carries_through_to_param_names_attr(tmp_path):
+    td = L.load_training_data(_pcfg(_save_named(tmp_path), camels_param_indices=[2]))
+    assert td.param_names == ["gamma"]
+
+
+def test_name_selection_falls_back_to_registry_when_unstamped(tmp_path):
+    # An un-stamped dataset under a registered suite: names resolve via the
+    # registry, so name selection still works.
+    import fgas_spk.camels_params as CP
+    sb35 = "CAMELS-IllustrisTNG-L50n512-SB35"
+    n_params = len(CP.param_names_for(sb35))
+    ds = _make_dataset(with_params=True)
+    ds.camels_params = (np.arange(ds.fgas.shape[0] * n_params)
+                        .reshape(ds.fgas.shape[0], n_params).astype(float))
+    npz = S.save_dataset(
+        ds, project_root=tmp_path, suite=sb35, snapshot=74, redshift=0.47,
+        source="rhliu", tag="vsb", stamp_param_names=False,
+    )
+    td = L.load_training_data(_pcfg(npz, camels_param_names=["HubbleParam", "Omega0"]))
+    assert td.param_names == ["Omega0", "HubbleParam"]            # sorted by column
+    assert td.X_params.shape[1] == 2
+
+
+def test_name_selection_without_resolvable_names_raises(tmp_path):
+    # Un-stamped dataset under an unregistered suite -> no name list available.
+    ds = _make_dataset(with_params=True)
+    npz = S.save_dataset(
+        ds, project_root=tmp_path, suite="TEST", snapshot=74, redshift=0.47,
+        source="rhliu", tag="vno", stamp_param_names=False,
+    )
+    # Index selection still works without names...
+    td = L.load_training_data(_pcfg(npz, camels_param_indices=[0]))
+    assert td.param_names is None
+    # ...but name selection cannot resolve.
+    with pytest.raises(ValueError, match="no parameter-name list"):
+        L.load_training_data(_pcfg(npz, camels_param_names=["alpha"]))
+
+
+def test_param_subset_with_params_off_raises():
+    with pytest.raises(ValueError, match="include_camels_params is False"):
+        L.DataConfig(path="x.npz", include_camels_params=False,
+                     camels_param_indices=[0])
+
+
+def test_param_subset_config_yaml_round_trip(tmp_path):
+    cfg = L.DataConfig(path="some.npz", camels_param_indices=[0, 3],
+                       camels_param_names=["alpha"])
+    back = L.DataConfig.from_yaml(cfg.to_yaml(tmp_path / "c.yaml"))
+    assert back == cfg

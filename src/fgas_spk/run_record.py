@@ -226,6 +226,11 @@ def _build_env(
                 else None
             ),
         },
+        "param_selection": {
+            "include_camels_params": data_config.include_camels_params,
+            "camels_param_indices": data_config.camels_param_indices,
+            "camels_param_names": data_config.camels_param_names,
+        },
         "packages": _package_versions(),
     }
 
@@ -338,6 +343,8 @@ def write_run_record(
         # k_range target fields).
         "data": {
             "include_camels_params": data_config.include_camels_params,
+            "camels_param_indices": data_config.camels_param_indices,
+            "camels_param_names": data_config.camels_param_names,
             "include_nd_feature": data_config.include_nd_feature,
             "include_mean_halo_mass": data_config.include_mean_halo_mass,
             "number_density_indices": data_config.number_density_indices,

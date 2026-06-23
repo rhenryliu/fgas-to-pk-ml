@@ -45,6 +45,8 @@ Example config (YAML)::
     include_nd_feature: true                  # number density -> X_cond
     include_mean_halo_mass: false             # mean M_500c -> X_cond
     include_camels_params: true               # CAMELS params -> X_params (on by default)
+    camels_param_indices: null                # subset of param columns by index; null = all
+    camels_param_names: null                  # subset by physical name (e.g. [Omega0, HubbleParam]); null = all
 
     # Target:
     target_mode: curve        # one of: curve | single_k | k_range
@@ -73,6 +75,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
+from fgas_spk.camels_params import param_names_for, resolve_param_columns
 from fgas_spk.schema import FgasSpkDataset, load_dataset, resolve_dataset_path
 
 _TARGET_MODES = ("curve", "single_k", "k_range")
@@ -116,6 +119,18 @@ class DataConfig:
             concatenated into ``X``). Defaults to True. With it enabled, a
             dataset that carries no params raises rather than silently omitting
             them; set this False to opt out for param-less datasets.
+        camels_param_indices (list[int], optional): Subset of CAMELS parameter
+            **columns** to keep, by 0-based index into the saved
+            ``camels_params``. None keeps all columns. Combined with
+            ``camels_param_names`` (union, de-duplicated, sorted ascending by
+            column). Only used when ``include_camels_params`` is True.
+        camels_param_names (list[str], optional): Subset of CAMELS parameters to
+            keep, by physical name (e.g. ``['Omega0', 'HubbleParam']``). Names are
+            resolved against the dataset's stamped ``camels_param_names`` if
+            present, else the registry keyed by the dataset's ``suite``
+            (:data:`fgas_spk.camels_params.CAMELS_PARAM_NAMES`). None keeps all
+            columns. Requires a resolvable name list; index selection does not.
+            Only used when ``include_camels_params`` is True.
         target_mode (str): One of ``"curve"`` (full SP(k) curve), ``"single_k"``
             (scalar at the nearest k bin), or ``"k_range"`` (SP(k) over an
             inclusive k-window). Defaults to ``"curve"``.
@@ -144,6 +159,8 @@ class DataConfig:
     include_nd_feature: bool = True
     include_mean_halo_mass: bool = False
     include_camels_params: bool = True
+    camels_param_indices: list[int] | None = None
+    camels_param_names: list[str] | None = None
 
     # --- target ---
     target_mode: str = "curve"
@@ -179,6 +196,17 @@ class DataConfig:
                 f"k_target is set but target_mode={self.target_mode!r}; k_target "
                 "only applies to target_mode='single_k'. Set "
                 "target_mode='single_k' or remove k_target."
+            )
+        # A parameter subset given with params switched off would be silently
+        # ignored downstream; fail loud here instead (mirrors the k-field checks).
+        if not self.include_camels_params and (
+            self.camels_param_indices is not None
+            or self.camels_param_names is not None
+        ):
+            raise ValueError(
+                "camels_param_indices / camels_param_names are set but "
+                "include_camels_params is False; the subset would be ignored. "
+                "Set include_camels_params=True or remove the subset."
             )
 
     @classmethod
@@ -271,10 +299,17 @@ class TrainingData:
             in fixed order: number density [(Mpc/h)^-3] (if ``include_nd_feature``)
             then mean halo mass M_500c [M_sun/h] (if ``include_mean_halo_mass``).
         X_params (np.ndarray, optional): The simulation's CAMELS parameters,
-            shape (n_examples, n_params), aligned with ``sim_index`` (a sim's
-            params are repeated across its number densities). None unless
-            ``include_camels_params`` is set; see that flag for the param-less
-            behaviour.
+            shape (n_examples, n_params_sel), aligned with ``sim_index`` (a sim's
+            params are repeated across its number densities). When a subset was
+            requested (``camels_param_indices`` / ``camels_param_names``) the
+            columns are that subset, sorted ascending by original column index.
+            None unless ``include_camels_params`` is set; see that flag for the
+            param-less behaviour.
+        param_names (list[str], optional): Physical names of the ``X_params``
+            columns, in the same (sorted) order, length ``n_params_sel``. None
+            when ``X_params`` is None, or when the columns could not be labelled
+            (an index-only selection on a dataset with no stamped names and no
+            registry entry for its suite).
         y (np.ndarray): Target. Shape (n_examples, n_k_sel) for ``curve`` and
             ``k_range``; shape (n_examples,) for ``single_k``.
         nd (np.ndarray): Number-density value for each row, shape (n_examples,),
@@ -300,6 +335,7 @@ class TrainingData:
     k: np.ndarray
     radii_mpch: np.ndarray
     source_path: str
+    param_names: list[str] | None = None
     meta: dict = field(default_factory=dict)
     config: DataConfig | None = None
 
@@ -340,6 +376,34 @@ def _select_nd_indices(dataset: FgasSpkDataset, nd_indices: list[int] | None) ->
     if not nd_indices:
         raise ValueError("number_density_indices is empty; select at least one.")
     return np.array([int(j) for j in nd_indices], dtype=int)
+
+
+def _available_param_names(
+    dataset: FgasSpkDataset, meta: dict
+) -> tuple[str, ...] | None:
+    """Resolve the CAMELS parameter-column names available for this dataset.
+
+    Prefers names stamped on the dataset (``camels_param_names``); failing that,
+    falls back to the registry keyed by the recorded ``suite``. Returns None when
+    neither is available -- index-based selection still works in that case, but
+    name-based selection will be rejected downstream.
+
+    Args:
+        dataset (FgasSpkDataset): The loaded dataset.
+        meta (dict): Its embedded ``__meta__`` (for the ``suite`` fallback key).
+
+    Returns:
+        tuple[str, ...] | None: The column names in order, or None if unlabelled.
+    """
+    if dataset.camels_param_names is not None:
+        return tuple(dataset.camels_param_names)
+    suite = meta.get("suite")
+    if suite is not None:
+        try:
+            return param_names_for(suite)
+        except KeyError:
+            return None
+    return None
 
 
 def _radial_mask(dataset: FgasSpkDataset, rng: tuple[float, float] | None) -> np.ndarray:
@@ -420,6 +484,7 @@ def load_training_data(config: DataConfig) -> TrainingData:
     X_cond = np.hstack(cond_blocks) if cond_blocks else None
 
     X_params = None
+    param_names: list[str] | None = None
     if config.include_camels_params:
         if dataset.camels_params is None:
             raise ValueError(
@@ -427,8 +492,17 @@ def load_training_data(config: DataConfig) -> TrainingData:
                 "camels_params (it was saved without a params_path). Set "
                 "include_camels_params=False to load this param-less dataset."
             )
-        params_sel = np.asarray(dataset.camels_params)[rows]     # (S, n_params)
-        X_params = np.repeat(params_sel, n_nd_sel, axis=0)       # (S*M, n_params)
+        all_params = np.asarray(dataset.camels_params)           # (n_sims_all, P)
+        n_params = all_params.shape[1]
+        available_names = _available_param_names(dataset, meta)
+        col_idx, param_names = resolve_param_columns(
+            n_params,
+            available_names,
+            config.camels_param_indices,
+            config.camels_param_names,
+        )
+        params_sel = all_params[np.ix_(rows, col_idx)]           # (S, P_sel)
+        X_params = np.repeat(params_sel, n_nd_sel, axis=0)       # (S*M, P_sel)
 
     # Target shaping. The suppression curve is per-simulation, so each sim's row
     # is repeated across its number densities.
@@ -464,6 +538,7 @@ def load_training_data(config: DataConfig) -> TrainingData:
         k=k_sel,
         radii_mpch=np.asarray(dataset.radii_mpch)[r_pos],
         source_path=str(npz_path),
+        param_names=param_names,
         meta=meta,
         config=config,
     )
@@ -475,11 +550,18 @@ def _summarize(td: TrainingData) -> str:
     target_mode = td.config.target_mode if td.config is not None else "?"
     cond_shape = td.X_cond.shape if td.X_cond is not None else "none"
     params_shape = td.X_params.shape if td.X_params is not None else "none"
+    if td.param_names is not None:
+        params_cols = ", ".join(td.param_names)
+    elif td.X_params is not None:
+        params_cols = "(unlabelled)"
+    else:
+        params_cols = "none"
     lines = [
         f"resolved path : {td.source_path}",
         f"X shape       : {td.X.shape}  (n_examples, n_radii) [profile]",
         f"X_cond shape  : {cond_shape}  (nd, mean_halo_mass)",
         f"X_params shape: {params_shape}  (CAMELS params)",
+        f"X_params cols : {params_cols}",
         f"y shape       : {td.y.shape}  (target_mode={target_mode})",
         f"n_examples    : {td.X.shape[0]}",
         f"n_sims        : {np.unique(td.sim_index).size}",
