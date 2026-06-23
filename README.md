@@ -318,10 +318,9 @@ scratch-root override for run outputs).
 | Field | Meaning |
 | --- | --- |
 | `model` | Registry name (validated at run time against `fgas_spk.models.REGISTRY`, not at config-load). |
-| `model_params` | Free-form hyperparameter mapping passed to the model constructor as `**kwargs`. Must be a mapping; `None` is coerced to `{}`. |
+| `model_params` | Free-form hyperparameter mapping passed to the model constructor as `**kwargs`. **All** model hyperparameters live here, including the iterative-training knobs (`epochs`, `batch_size`, learning rate, weight decay, ...) for models that train iteratively — each model owns and documents its own (e.g. the MLP reads `epochs`/`lr`/`batch_size`/`weight_decay`; the PCA reference reads `n_components`). Must be a mapping; `None` is coerced to `{}`. |
 | `seed` | Global reproducibility seed (model init, shuffles). |
 | `split` | A `SplitSpec`: `train_frac`/`val_frac`/`test_frac` (must lie in `[0, 1]`, sum to 1, with `train_frac > 0`) and a `seed`. `val_frac = 0` gives a two-way train/test split. A plain YAML mapping here is coerced to a `SplitSpec`. |
-| `epochs`, `batch_size`, `learning_rate`, `optimizer` | Iterative-training knobs; ignored by non-iterative models (e.g. the PCA reference). |
 | `write_root` | Scratch-root override; `null` defers to `$FGAS_SCRATCH_ROOT` (or `--scratch-root`). |
 
 `RunConfig` mirrors `DataConfig`'s style — `from_yaml`/`to_yaml` round-trip and

@@ -27,7 +27,6 @@ def test_runconfig_yaml_round_trip(tmp_path):
         model_params={"n_components": 8, "whiten": True},
         seed=42,
         split=SplitSpec(train_frac=0.7, val_frac=0.15, test_frac=0.15, seed=1),
-        epochs=50, batch_size=32, learning_rate=5.0e-4, optimizer="adamw",
         write_root="/scratch/run",
     )
     out = cfg.to_yaml(tmp_path / "config_run.yaml")
@@ -114,7 +113,8 @@ def test_existing_data_config_yaml_loads_unchanged():
     assert isinstance(cfg, DataConfig)
     # Spot-check fields from the shipped file.
     assert cfg.suite == "CAMELS-IllustrisTNG-L50n512-SB35"
-    assert cfg.target_mode == "curve"
+    assert cfg.target_mode == "k_range"
+    assert cfg.k_range == (0.5, 5.0)
 
 
 # --- flat-API exposure -----------------------------------------------------

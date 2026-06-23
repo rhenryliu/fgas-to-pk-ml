@@ -169,11 +169,16 @@ def test_ledger_gains_exactly_one_wellformed_line(tmp_path):
     entry = json.loads(lines[0])
     assert set(entry) == {
         "run_id", "config_hash", "git_sha", "dirty", "hparams",
-        "metrics", "run_dir",
+        "data", "metrics", "run_dir",
     }
     assert entry["run_id"] == rec.run_id
     assert entry["hparams"]["model"] == "pca_linear"
     assert entry["hparams"]["model_params"] == {"n_components": 4}
+    # The data block records the target selection so a single_k run's target
+    # wavenumber stays recoverable from the grep-friendly ledger alone.
+    assert entry["data"]["target_mode"] == "single_k"
+    assert entry["data"]["k_target"] == 3.0
+    assert entry["data"]["k_range"] is None
     assert entry["metrics"] == {"test_rmse": 0.123, "final_rmse": 0.1}
     assert entry["run_dir"].startswith("experiments/runs/")
 

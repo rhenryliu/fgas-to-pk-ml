@@ -287,7 +287,11 @@ def run_training(
         data_root=effective_data_root,
         scratch_root=scratch_root,
         summary=summary,
-        metrics=None,  # PCA reference is non-iterative: no per-epoch trace
+        # Record a per-epoch trace if the model keeps one (duck-typed, so the
+        # runner names no model): a model that trains iteratively may expose a
+        # ``history`` list of per-epoch metric rows; one that fits in a single
+        # shot has none and records an empty metrics.jsonl, as before.
+        metrics=getattr(model, "history", None) or None,
         device=device,
         experiments_root=experiments_root,
     )

@@ -87,18 +87,26 @@ class RunConfig:
     :class:`~fgas_spk.loader.DataConfig`). The ``model`` name is validated
     against the model registry later, at run time, not here.
 
+    All model hyperparameters -- including the iterative-training knobs
+    (``epochs``, ``batch_size``, learning rate, optimizer choice, ...) -- live in
+    :attr:`model_params`, which the runner passes straight through as
+    ``REGISTRY[model](seed=seed, **model_params)``. The config carries **no**
+    top-level training fields: each model owns and documents its own
+    hyperparameters (e.g. the MLP reads ``epochs`` / ``lr`` / ``batch_size`` /
+    ``weight_decay`` from ``model_params``, the PCA reference reads
+    ``n_components``), so the recorded ``config_run.yaml`` reflects exactly what
+    trained with no unused defaults.
+
     Attributes:
         model (str): Registry name of the model to train. Not validated here.
-        model_params (dict): Free-form hyperparameters passed to the model.
-        seed (int): Global seed for reproducibility (model init, data shuffles).
+        model_params (dict): Free-form hyperparameters passed verbatim to the
+            model constructor. This is where epochs / learning rate / batch size /
+            etc. go for models that train iteratively.
+        seed (int): Reproducibility seed for model construction (passed to the
+            model as ``seed``). The grouped data split has its own seed,
+            ``split.seed``.
         split (SplitSpec): Grouped-by-``sim_index`` train/val/test split. A plain
             mapping is coerced to :class:`SplitSpec` on construction.
-        epochs (int): Number of training epochs. Ignored by models that do not
-            train iteratively (e.g. the PCA reference).
-        batch_size (int): Mini-batch size. Ignored by non-iterative models.
-        learning_rate (float): Optimizer learning rate. Ignored by non-iterative
-            models.
-        optimizer (str): Optimizer name. Ignored by non-iterative models.
         write_root (str | None): Scratch-root override for run outputs. ``None``
             defers to :func:`fgas_spk.paths.resolve_scratch_root`. This is the
             only path-like field on the config.
@@ -108,10 +116,6 @@ class RunConfig:
     model_params: dict = field(default_factory=dict)
     seed: int = 0
     split: SplitSpec = field(default_factory=SplitSpec)
-    epochs: int = 100
-    batch_size: int = 64
-    learning_rate: float = 1.0e-3
-    optimizer: str = "adam"
     write_root: str | None = None
 
     def __post_init__(self) -> None:

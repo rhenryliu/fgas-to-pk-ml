@@ -331,12 +331,18 @@ def write_run_record(
             "model_params": run_config.model_params,
             "seed": run_config.seed,
         },
-        "data": {                                          # NEW
+        # NOTE: a "data" block was added here on 2026-06-23; ledger lines written
+        # before that have no "data" key. When comparing runs by config_hash,
+        # filter on the presence of "data" so pre- and post-change DataConfig
+        # schemas are not conflated (older lines also predate the k_target/
+        # k_range target fields).
+        "data": {
             "include_camels_params": data_config.include_camels_params,
             "include_nd_feature": data_config.include_nd_feature,
             "include_mean_halo_mass": data_config.include_mean_halo_mass,
             "number_density_indices": data_config.number_density_indices,
             "target_mode": data_config.target_mode,
+            "k_target": data_config.k_target,
             "k_range": list(data_config.k_range) if data_config.k_range is not None else None,
         },
         "metrics": dict(summary),
