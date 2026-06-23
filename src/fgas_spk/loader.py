@@ -75,7 +75,11 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from fgas_spk.camels_params import param_names_for, resolve_param_columns
+from fgas_spk.camels_params import (
+    CAMELS_PARAM_NAMES,
+    param_names_for,
+    resolve_param_columns,
+)
 from fgas_spk.schema import FgasSpkDataset, load_dataset, resolve_dataset_path
 
 _TARGET_MODES = ("curve", "single_k", "k_range")
@@ -397,12 +401,12 @@ def _available_param_names(
     """
     if dataset.camels_param_names is not None:
         return tuple(dataset.camels_param_names)
+    # Membership test, not try/except: an unregistered suite is the expected
+    # "no names" case, but a try/except would also swallow an unexpected KeyError
+    # from a future lookup path, contradicting the registry's fail-loud intent.
     suite = meta.get("suite")
-    if suite is not None:
-        try:
-            return param_names_for(suite)
-        except KeyError:
-            return None
+    if suite is not None and suite in CAMELS_PARAM_NAMES:
+        return param_names_for(suite)
     return None
 
 
