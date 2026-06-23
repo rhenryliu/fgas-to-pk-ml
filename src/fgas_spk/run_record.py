@@ -331,6 +331,14 @@ def write_run_record(
             "model_params": run_config.model_params,
             "seed": run_config.seed,
         },
+        "data": {                                          # NEW
+            "include_camels_params": data_config.include_camels_params,
+            "include_nd_feature": data_config.include_nd_feature,
+            "include_mean_halo_mass": data_config.include_mean_halo_mass,
+            "number_density_indices": data_config.number_density_indices,
+            "target_mode": data_config.target_mode,
+            "k_range": list(data_config.k_range) if data_config.k_range is not None else None,
+        },
         "metrics": dict(summary),
         "run_dir": str(run_dir.relative_to(experiments_root.parent)),
     }

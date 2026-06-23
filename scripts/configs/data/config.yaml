@@ -36,6 +36,6 @@ include_mean_halo_mass: false  # stack's mean M_500c [M_sun/h] -> X_cond
 include_camels_params: false    # CAMELS params -> X_params (on by default; raises if the dataset lacks them)
 
 # --- Target ---
-target_mode: curve   # one of: curve | single_k | k_range
+target_mode: k_range   # one of: curve | single_k | k_range
 k_target: null       # required for single_k (nearest-k bin), in h/Mpc
 k_range: [0.5, 5.0]        # required for k_range, e.g. [0.5, 5.0] (inclusive), in h/Mpc
