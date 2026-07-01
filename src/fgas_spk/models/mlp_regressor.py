@@ -196,16 +196,16 @@ class MlpRegressor:
         # Fit normalisation on the training batch (each modality on its own scale).
         self._x_mean, self._x_std = self._fit_norm(X)
         self._y_mean, self._y_std = self._fit_norm(y2d)
-        if self._uses_cond:
+        if X_cond is not None:
             self._cond_mean, self._cond_std = self._fit_norm(X_cond)
-        if self._uses_params:
+        if X_params is not None:
             self._params_mean, self._params_std = self._fit_norm(X_params)
 
         # Infer widths from this first batch -- no hardcoded dimensions. X_cond and
         # X_params are concatenated into one conditioning context of width n_context.
         n_profile = X.shape[1]
-        n_cond = X_cond.shape[1] if self._uses_cond else 0
-        n_params = X_params.shape[1] if self._uses_params else 0
+        n_cond = X_cond.shape[1] if X_cond is not None else 0
+        n_params = X_params.shape[1] if X_params is not None else 0
         n_context = n_cond + n_params
         n_k = y2d.shape[1]
 
@@ -213,6 +213,7 @@ class MlpRegressor:
         torch.manual_seed(self.seed)
         self._device = self._resolve_device()
         self._build_modules(n_profile, n_context, n_k)
+        assert self._encoder is not None and self._decoder is not None
         self._encoder.to(self._device)
         self._decoder.to(self._device)
 
@@ -294,6 +295,7 @@ class MlpRegressor:
         if self._encoder is None or self._decoder is None:
             raise RuntimeError("MlpRegressor.predict called before fit.")
         self._check_modality(X_cond, X_params)
+        assert self._x_mean is not None and self._x_std is not None
 
         x_t = self._to_tensor(
             self._apply_norm(np.asarray(X, dtype=np.float64), self._x_mean, self._x_std)
@@ -307,6 +309,7 @@ class MlpRegressor:
             out = self._decode(self._encode(x_t, cond_t), cond_t)
         out = out.detach().cpu().numpy()
 
+        assert self._y_mean is not None and self._y_std is not None
         y = self._invert_norm(out, self._y_mean, self._y_std)
         if self._y_was_1d:
             y = y[:, 0]
@@ -347,6 +350,7 @@ class MlpRegressor:
         if self._encoder is None:
             raise RuntimeError("MlpRegressor.latents called before fit.")
         self._check_modality(X_cond, X_params)
+        assert self._x_mean is not None and self._x_std is not None
 
         x_t = self._to_tensor(
             self._apply_norm(np.asarray(X, dtype=np.float64), self._x_mean, self._x_std)
@@ -389,6 +393,7 @@ class MlpRegressor:
         import torch
 
         enc_in = x if cond is None else torch.cat([x, cond], dim=1)
+        assert self._encoder is not None
         return self._encoder(enc_in)
 
     def _decode(self, z, cond):
@@ -396,6 +401,7 @@ class MlpRegressor:
         import torch
 
         dec_in = z if cond is None else torch.cat([z, cond], dim=1)
+        assert self._decoder is not None
         return self._decoder(dec_in)
 
     def _resolve_device(self):
@@ -442,6 +448,7 @@ class MlpRegressor:
         """
         blocks = []
         if self._uses_cond:
+            assert self._cond_mean is not None and self._cond_std is not None
             blocks.append(
                 self._apply_norm(
                     np.asarray(X_cond, dtype=np.float64),
@@ -450,6 +457,7 @@ class MlpRegressor:
                 )
             )
         if self._uses_params:
+            assert self._params_mean is not None and self._params_std is not None
             blocks.append(
                 self._apply_norm(
                     np.asarray(X_params, dtype=np.float64),

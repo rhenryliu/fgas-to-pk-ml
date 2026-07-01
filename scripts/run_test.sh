@@ -17,4 +17,6 @@ conda activate fgas-ml
 
 echo "run.py"
 
-srun python -u run.py --config-data configs/data/config.yaml --config-run configs/run/mlp_regressor.yaml
+python -u run.py --config-data configs/data/config.yaml --config-run configs/run/mlp_regressor.yaml
+python -u run.py --config-data configs/data/config.yaml --config-run configs/run/pca_reference.yaml
+ 

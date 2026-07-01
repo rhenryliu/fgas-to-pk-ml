@@ -10,7 +10,7 @@ model: mlp_regressor          # registry name (fgas_spk.models.REGISTRY)
 model_params:
   latent_dim: 4
   hidden: 256
-  n_layers: 2
+  n_layers: 4
   epochs: 200
   lr: 1.0e-3
   weight_decay: 0.05

@@ -159,10 +159,29 @@ def _rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(np.sqrt(np.mean(diff ** 2)))
 
 
+def _figure_label(run_id: str, model_name: str) -> str:
+    """Human-readable run label for figure filenames and titles.
+
+    Replaces the trailing git-sha segment of ``run_id`` -- useful for machine
+    bookkeeping but not for a human reading a plot -- with the model name,
+    yielding ``<timestamp>__<config-hash>__<model>``. The full ``run_id`` (git
+    sha included) remains the key for the run record and checkpoint.
+
+    Args:
+        run_id (str): The run identifier, ``<ts>__<config-hash8>__<sha7>``.
+        model_name (str): The registered model name (``RunConfig.model``).
+
+    Returns:
+        str: The label with the git-sha segment replaced by ``model_name``.
+    """
+    base = run_id.rsplit("__", 1)[0]  # drop the trailing git-sha7 segment
+    return f"{base}__{model_name}"
+
+
 def _write_pred_vs_true_figure(
-    model, td: TrainingData, masks: dict, run_id: str, summary: dict
+    model, td: TrainingData, masks: dict, label: str, summary: dict, extension: str = "png"
 ) -> Path | None:
-    """Write a held-out predicted-vs-true SP(k) scatter; run id in the filename.
+    """Write a held-out predicted-vs-true SP(k) scatter; ``label`` in the filename.
 
     matplotlib is imported lazily (Agg backend) so the runner imports without it.
     Returns None if matplotlib is unavailable.
@@ -186,9 +205,68 @@ def _write_pred_vs_true_figure(
     ax.plot([lo, hi], [lo, hi], "k--", linewidth=1)
     ax.set_xlabel("true SP(k)")
     ax.set_ylabel("predicted SP(k)")
-    ax.set_title(f"{run_id}\n{held} RMSE = {summary['rmse']:.4g}")
+    ax.set_title(f"{label}\n{held} RMSE = {summary['rmse']:.4g}")
 
-    out = figure_dir() / f"{run_id}__pred_vs_true.pdf"
+    out = figure_dir() / f"{label}__pred_vs_true.{extension}"
+    fig.tight_layout()
+    fig.savefig(out)
+    plt.close(fig)
+    return out
+
+
+def _write_rmse_vs_k_figure(
+    model, td: TrainingData, masks: dict, label: str, summary: dict, extension: str = "png"
+) -> Path | None:
+    """Write the k-dependent RMSE of SP(k) for every non-empty split.
+
+    RMSE is computed *per k bin* (across rows of a split) and plotted against k
+    on a log-k axis, one curve per non-empty split (train / val / test); ``val``
+    is omitted when ``val_frac == 0``. This complements the held-out scatter from
+    :func:`_write_pred_vs_true_figure` by showing where, in k, the model errs.
+    ``label`` is used in the filename and title.
+
+    Skipped for ``single_k`` targets: ``y`` is then 1-D (a single k bin), which is
+    not a curve. matplotlib is imported lazily (Agg backend). Returns the written
+    path, or None if matplotlib is unavailable or the figure was skipped.
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:  # pragma: no cover - matplotlib is in the env
+        return None
+
+    # single_k yields a 1-D target (one k bin); a per-k RMSE curve is undefined.
+    if np.asarray(td.y).ndim < 2:
+        return None
+
+    k = np.asarray(td.k)
+    fig, ax = plt.subplots(figsize=(6, 4))
+    plotted = False
+    for name in ("train", "val", "test"):
+        mask = masks.get(name)
+        if mask is None or not np.asarray(mask).any():
+            continue
+        sub = _subset(td, mask)
+        y_true = np.asarray(sub.y)
+        y_pred = np.asarray(
+            model.predict(sub.X, sub.X_cond, sub.X_params)
+        ).reshape(y_true.shape)
+        rmse_k = np.sqrt(np.mean((y_pred - y_true) ** 2, axis=0))  # (n_k,)
+        ax.plot(k, rmse_k, marker=".", label=f"{name} (n={int(np.asarray(mask).sum())})")
+        plotted = True
+
+    if not plotted:
+        plt.close(fig)
+        return None
+
+    ax.set_xscale("log")
+    ax.set_xlabel("k [h/Mpc]")
+    ax.set_ylabel("RMSE of SP(k)")
+    ax.set_title(f"{label}\nper-k RMSE")
+    ax.legend()
+
+    out = figure_dir() / f"{label}__rmse_vs_k.{extension}"
     fig.tight_layout()
     fig.savefig(out)
     plt.close(fig)
@@ -304,7 +382,9 @@ def run_training(
     joblib.dump(model, checkpoint_path)
 
     if write_figures:
-        _write_pred_vs_true_figure(model, td, masks, record.run_id, summary)
+        label = _figure_label(record.run_id, run_config.model)
+        _write_pred_vs_true_figure(model, td, masks, label, summary)
+        _write_rmse_vs_k_figure(model, td, masks, label, summary)
 
     return RunResult(
         run_id=record.run_id,
