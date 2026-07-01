@@ -1,0 +1,16 @@
+model: mlp_regressor
+model_params:
+  latent_dim: 100
+  hidden: 256
+  n_layers: 4
+  epochs: 400
+  lr: 0.001
+  weight_decay: 0.05
+  batch_size: 128
+seed: 0
+split:
+  train_frac: 0.7
+  val_frac: 0.1
+  test_frac: 0.2
+  seed: 100
+write_root: null
