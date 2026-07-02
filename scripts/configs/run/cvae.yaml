@@ -1,0 +1,44 @@
+# RunConfig for the conditional VAE model (fgas_spk.models.cvae).
+# Pair this with a DataConfig (e.g. scripts/configs/data/config.yaml) and run:
+#
+#     python scripts/run.py --config-data scripts/configs/data/config.yaml \
+#                           --config-run  scripts/configs/run/cvae.yaml
+#
+# The CVAE is the probabilistic successor to mlp_regressor: predict() returns the
+# posterior-mean point prediction (comparable to the MLP on the same split), and
+# the model additionally exposes a predictive spread via predict_samples(). That
+# spread is only cleanly interpretable on the proxy-sound k_range target
+# (k in [0.5, 5.0] h/Mpc) -- set that in the DataConfig, not here.
+#
+# model_params below are the model's own defaults, listed explicitly so the
+# recorded config_run.yaml reflects exactly what trained.
+
+model: cvae                   # registry name (fgas_spk.models.REGISTRY)
+model_params:
+  latent_dim: 4               # width of the stochastic bottleneck
+  hidden: 128                 # modest width: favour regularisation over capacity
+  n_layers: 2                 # hidden layers in the encoder and decoder (each)
+  epochs: 200
+  lr: 1.0e-3
+  weight_decay: 0.0           # >0 -> AdamW (decoupled); 0 -> plain Adam
+  dropout: 0.0                # dropout after each hidden activation (regulariser)
+  batch_size: 128
+  beta: 1.0                   # terminal KL weight in the ELBO after annealing
+  anneal_epochs: null         # null -> epochs // 4 (= 50); linear KL warm-up
+
+seed: 0                    # reproducibility seed (threaded into torch.manual_seed)
+
+# Grouped-by-sim_index split. Matches scripts/configs/run/mlp_regressor.yaml so a
+# CVAE-vs-MLP comparison runs on the same folds. val_frac: 0.0 -> two-way split.
+split:
+  train_frac: 0.7
+  val_frac: 0.1
+  test_frac: 0.2
+  seed: 100
+
+# Held-out evaluation diagnostics (post-fit only; do not affect training).
+evaluation:
+  suppressed_thresholds: [0.95, 0.9, 0.8]   # pooled held-out RMSE where TRUE SP(k) < t
+
+# Scratch write root. null defers to $FGAS_SCRATCH_ROOT (or --scratch-root).
+write_root: null

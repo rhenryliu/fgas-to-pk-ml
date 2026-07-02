@@ -23,5 +23,6 @@ from fgas_spk.models.base import REGISTRY, ProfileToSpk, register
 # this package stays torch-free -- only the @register side effect runs here.
 from fgas_spk.models import mlp_regressor  # noqa: F401  (registers "mlp_regressor")
 from fgas_spk.models import pca_linear  # noqa: F401  (registers "pca_linear")
+from fgas_spk.models import cvae  # noqa: F401  (registers "cvae")
 
-__all__ = ["REGISTRY", "ProfileToSpk", "register", "mlp_regressor", "pca_linear"]
+__all__ = ["REGISTRY", "ProfileToSpk", "register", "mlp_regressor", "pca_linear", "cvae"]

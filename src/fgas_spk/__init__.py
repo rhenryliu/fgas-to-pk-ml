@@ -43,7 +43,7 @@ from importlib.metadata import version as _pkg_version
 
 from fgas_spk.builder import build_fgas_spk_dataset, build_fgas_spk_from_compiled
 from fgas_spk.camels_params import CAMELS_PARAM_NAMES, param_names_for
-from fgas_spk.experiment import RunConfig, SplitSpec, load_configs
+from fgas_spk.experiment import EvaluationSpec, RunConfig, SplitSpec, load_configs
 from fgas_spk.loader import DataConfig, TrainingData, load_training_data
 from fgas_spk.schema import (
     SCHEMA_VERSION,
@@ -83,5 +83,6 @@ __all__ = [
     # experiment -- trainer-side config
     "RunConfig",
     "SplitSpec",
+    "EvaluationSpec",
     "load_configs",
 ]

@@ -80,6 +80,43 @@ class SplitSpec:
 
 
 @dataclass
+class EvaluationSpec:
+    """Held-out evaluation-diagnostic settings (no effect on training).
+
+    These knobs configure the runner's post-fit diagnostics only; they do not
+    change what or how a model trains. Kept on :class:`RunConfig` so the choice
+    is recorded verbatim in ``config_run.yaml`` alongside the run it describes.
+
+    Attributes:
+        suppressed_thresholds (list[float]): TRUE SP(k) thresholds ``t`` for the
+            suppressed-regime pooled RMSE -- the held-out RMSE restricted to the
+            k bins where the true suppression falls below ``t``. Defaults to
+            ``[0.95, 0.9, 0.8]`` (progressively deeper suppression).
+    """
+
+    suppressed_thresholds: list[float] = field(
+        default_factory=lambda: [0.95, 0.9, 0.8]
+    )
+
+    def __post_init__(self) -> None:
+        # A None (e.g. an explicit ``suppressed_thresholds: null`` in YAML) means
+        # "use the default". Coerce entries to float so downstream comparisons and
+        # the ``str(t)`` record keys are stable regardless of how the YAML wrote
+        # them (0.9 vs "0.9").
+        if self.suppressed_thresholds is None:
+            self.suppressed_thresholds = [0.95, 0.9, 0.8]
+        try:
+            self.suppressed_thresholds = [
+                float(t) for t in self.suppressed_thresholds
+            ]
+        except TypeError as exc:
+            raise TypeError(
+                "suppressed_thresholds must be a sequence of numbers, got "
+                f"{type(self.suppressed_thresholds).__name__}."
+            ) from exc
+
+
+@dataclass
 class RunConfig:
     """Model and training recipe for a single run.
 
@@ -107,6 +144,9 @@ class RunConfig:
             ``split.seed``.
         split (SplitSpec): Grouped-by-``sim_index`` train/val/test split. A plain
             mapping is coerced to :class:`SplitSpec` on construction.
+        evaluation (EvaluationSpec): Held-out evaluation-diagnostic settings (does
+            not affect training). A plain mapping is coerced to
+            :class:`EvaluationSpec` on construction; a ``None`` uses the defaults.
         write_root (str | None): Scratch-root override for run outputs. ``None``
             defers to :func:`fgas_spk.paths.resolve_scratch_root`. This is the
             only path-like field on the config.
@@ -116,6 +156,7 @@ class RunConfig:
     model_params: dict = field(default_factory=dict)
     seed: int = 0
     split: SplitSpec = field(default_factory=SplitSpec)
+    evaluation: EvaluationSpec = field(default_factory=EvaluationSpec)
     write_root: str | None = None
 
     def __post_init__(self) -> None:
@@ -137,6 +178,16 @@ class RunConfig:
             raise TypeError(
                 f"split must be a mapping or SplitSpec, got "
                 f"{type(self.split).__name__}."
+            )
+        # Same coercion for the evaluation-diagnostic settings.
+        if self.evaluation is None:
+            self.evaluation = EvaluationSpec()
+        elif isinstance(self.evaluation, dict):
+            self.evaluation = EvaluationSpec(**self.evaluation)
+        elif not isinstance(self.evaluation, EvaluationSpec):
+            raise TypeError(
+                f"evaluation must be a mapping or EvaluationSpec, got "
+                f"{type(self.evaluation).__name__}."
             )
 
     @classmethod

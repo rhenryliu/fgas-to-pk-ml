@@ -243,6 +243,7 @@ def write_run_record(
     data_root: str | Path,
     scratch_root: str | Path,
     summary: Mapping,
+    ledger_metrics: Mapping | None = None,
     metrics: Iterable[Mapping] | None = None,
     device: str | None = None,
     suppression_definition: str = DEFAULT_SUPPRESSION_DEFINITION,
@@ -265,8 +266,14 @@ def write_run_record(
         data_root (str | Path): The resolved root that data was read from.
         scratch_root (str | Path): The resolved root that run outputs are written
             to (the big artifacts live under ``<scratch_root>/models/<run_id>/``).
-        summary (Mapping): Headline metrics (e.g. final / test RMSE). Written to
-            ``summary.json`` and carried in the ledger line.
+        summary (Mapping): Metrics written verbatim to ``summary.json``. This is
+            the full record, which may include bulky evaluation diagnostics (e.g.
+            per-curve RMSE distributions, empirical coverage) beyond the headline
+            scalars.
+        ledger_metrics (Mapping | None): The lean subset carried in the ``metrics``
+            field of the one-line ``runs.jsonl`` ledger entry, keeping that entry
+            greppable when ``summary`` grows. Defaults to None, which falls back to
+            ``summary`` (so callers that pass only headline metrics are unchanged).
         metrics (Iterable[Mapping] | None): Per-epoch metric rows, one JSON object
             per line in ``metrics.jsonl``. None or empty leaves the file empty
             (the case for non-iterative models like the PCA reference).
@@ -324,8 +331,11 @@ def write_run_record(
 
     # One greppable ledger line per run. The run-dir path is recorded relative to
     # the experiments tree's parent (the repo for a real run), so the ledger
-    # stays portable.
+    # stays portable. The ledger carries only ``ledger_metrics`` (the lean
+    # headline subset) so the line stays greppable even when ``summary.json``
+    # grows bulky diagnostics; None falls back to the full summary.
     ledger_path = experiments_root / "runs.jsonl"
+    ledger_summary = ledger_metrics if ledger_metrics is not None else summary
     ledger_line = {
         "run_id": run_id,
         "config_hash": config_hash,
@@ -352,7 +362,7 @@ def write_run_record(
             "k_target": data_config.k_target,
             "k_range": list(data_config.k_range) if data_config.k_range is not None else None,
         },
-        "metrics": dict(summary),
+        "metrics": dict(ledger_summary),
         "run_dir": str(run_dir.relative_to(experiments_root.parent)),
     }
     with ledger_path.open("a") as handle:

@@ -25,5 +25,9 @@ split:
   test_frac: 0.2
   seed: 100
 
+# Held-out evaluation diagnostics (post-fit only; do not affect training).
+evaluation:
+  suppressed_thresholds: [0.95, 0.9, 0.8]   # pooled held-out RMSE where TRUE SP(k) < t
+
 # Scratch write root. null defers to $FGAS_SCRATCH_ROOT (or --scratch-root).
 write_root: null
