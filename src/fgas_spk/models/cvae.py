@@ -1,125 +1,114 @@
-"""Conditional variational autoencoder for f_gas(R) to SP(k) (PyTorch).
+"""Sohn-style conditional variational autoencoder for f_gas(R) to SP(k) (PyTorch).
 
-The probabilistic successor to :mod:`~fgas_spk.models.mlp_regressor`. It reuses
-that model's encoder/decoder skeleton, its internal standardisation, its
-conditioning-context wiring, and its device/guard machinery verbatim; the one
-structural change is the bottleneck. Where the MLP has a *plain deterministic*
-latent, the CVAE has a *sampled* latent with a KL-regularised evidence lower
-bound (ELBO). This buys two things at once:
+Unlike :mod:`~fgas_spk.models.vib_regressor` -- which uses a stochastic bottleneck
+with a *fixed* ``N(0, I)`` prior purely as a regulariser for a point prediction --
+this model is a genuine **conditional generative model** of ``p(SP(k) | f_gas(R),
+context)``. It is the conditional VAE of Sohn, Lee & Yan (2015): a
+*conditional* prior ``p(z | x)`` and a recognition network ``q(z | x, y)`` that
+sees the target during training. That is exactly what lets the decoded sample
+spread from :meth:`predict_samples` be an estimate of the conditional
+distribution's width -- how tightly a given f_gas(R) profile constrains SP(k) --
+rather than a regularisation noise floor. The scientific payload here is the
+*spread*, not only the point prediction.
 
-1. **A point prediction** -- the posterior mean -- that is directly comparable to
-   the deterministic MLP on the same split. Point accuracy is a first-class goal:
-   the KL term, dropout, and weight decay are all regularisers that can close (or
-   reverse) a deterministic net's generalisation gap on this small suite, so
-   beating the MLP's held-out RMSE is a legitimate target, not merely a tie.
-2. **A predictive spread** -- the spread of decoded samples for a fixed profile --
-   which is the scientific payload: how tightly a given f_gas(R) profile
-   constrains SP(k). Read it off via :meth:`predict_samples`.
+**Three networks** (each a shared ``n_layers``-deep GELU MLP with dropout):
 
-**Architecture (conditional VAE).**
+1. **recognition** ``q(z | x, y, ctx)`` -- input ``concat(X, y, ctx)``, output the
+   ``(mu_q, logvar_q)`` of the approximate posterior (``2 * latent_dim`` values).
+   **Used only during training** (and by :meth:`latents` when a target is passed):
+   it needs ``y``, which is unavailable at inference.
+2. **prior** ``p(z | x, ctx)`` -- input ``concat(X, ctx)``, output ``(mu_p,
+   logvar_p)``. This is the *conditional* prior; its ``logvar_p`` head is
+   zero-initialised so the prior starts at unit variance and the KL is well-behaved
+   from epoch 0. This network is what inference samples from.
+3. **decoder** ``p(y | z, x, ctx)`` -- input ``concat(z, X, ctx)``, output SP(k) of
+   width ``n_k``. The decoder consumes the **profile directly** (not only the
+   context), so ``x`` informs the mean and the latent ``z`` carries the residual,
+   underdetermined variation.
 
-The conditioning *context* is whichever of two optional modalities are present:
-``X_cond`` (observable scalars -- number density, optional mean halo mass) and
-``X_params`` (the simulation's CAMELS parameters, e.g. the five cosmological
-parameters). Each is standardised on its own scale and the two are concatenated
-into a single context vector, exactly as :class:`~fgas_spk.models.mlp_regressor.MlpRegressor`
-does. The model does not assume which modality is present -- it handles whichever
-are supplied, and the profile-only (no conditioning) path is supported too.
+All ``logvar`` outputs are clamped to ``[-8, 8]``. The conditioning *context* is
+handled exactly as in :mod:`~fgas_spk.models.vib_regressor`: whichever of
+``X_cond`` (observable scalars) and ``X_params`` (CAMELS parameters) are present is
+standardised on its own scale and concatenated; the profile-only path is
+supported. Whichever modalities are present at :meth:`fit` are required at predict.
 
-1. **encoder** maps ``concat(X, context)`` to *two* heads of width ``latent_dim``:
-   the posterior mean ``mu`` and log-variance ``logvar`` of an approximate
-   posterior ``q(z|x) = N(mu, exp(logvar))``. At train time the latent is drawn by
-   the reparameterisation trick ``z = mu + exp(0.5 * logvar) * eps`` with
-   ``eps ~ N(0, I)``, so gradients flow through ``mu`` / ``logvar``. At predict
-   time the latent is the posterior mean (``z = mu``, no sampling), which makes
-   :meth:`predict` deterministic.
-2. **decoder** maps ``concat(z, context)`` to the SP(k) target of width ``n_k``.
-   The decoder is conditioned on the context too -- mirroring the Lin et al. trick
-   of conditioning the decoder on cosmology (the CAMELS parameters make that
-   literal) -- so the latent is pushed to carry the residual feedback information
-   that the profile underdetermines, rather than re-encoding the number density or
-   the known parameters. With no conditioning the decoder reads the latent alone.
+**Loss -- the conditional ELBO (in ELBO units), with KL annealing.** Per minibatch:
 
-Input and output widths are inferred from the first :meth:`fit` batch; nothing
-about the data dimensions is hardcoded. The default ``hidden`` is a deliberately
-modest 128: with a small training set, regularisation is favoured over raw
-capacity.
+    z ~ q(z | x, y, ctx)   (reparameterised)
+    recon = ((decode(z, x, ctx) - y)**2).sum(dim=1).mean()
+    kl    = mean_batch sum_j KL( N(mu_q, e^{logvar_q}) || N(mu_p, e^{logvar_p}) )
+          = 0.5 * sum_j ( logvar_p - logvar_q
+                + (e^{logvar_q} + (mu_q - mu_p)^2) / e^{logvar_p} - 1 )
+    total = recon + beta_eff * kl
 
-**Loss -- ELBO with KL annealing.** Per minibatch the loss is
+The two-Gaussian KL reduces to the familiar ``KL(q || N(0, I))`` when ``mu_p = 0``
+and ``logvar_p = 0``. ``recon`` is the squared error **summed over the ``n_k``
+target bins and averaged over the batch** (= ``n_k`` times the plain MSE), matching
+the ELBO's per-example log-likelihood convention. ``beta_eff`` anneals linearly
+from ~0 to the configured ``beta`` (default 1.0) over the first ``anneal_epochs``
+epochs (default ``epochs // 4``). Gradients are clipped to a max norm of 1.0
+between ``backward`` and the step; the optimiser (AdamW when ``weight_decay > 0``,
+else Adam) spans **all three** networks' parameters.
 
-    total = recon + beta_eff * KL
+**Internal validation and best-epoch restore.** As in
+:mod:`~fgas_spk.models.vib_regressor`: ``val_frac`` (default 0.1) of the rows are
+held out by a seeded shuffle (``ceil(val_frac * n)`` rows), the per-epoch
+validation loss is computed with the **terminal** ``beta`` (not the annealed
+``beta_eff``), the lowest-validation-loss weights of all three networks are
+restored at the end of :meth:`fit`, and :attr:`best_epoch` records that epoch.
+``val_frac == 0`` disables it (train on all rows, keep the final weights,
+``val_loss`` recorded as ``None``, :attr:`best_epoch` ``None``).
 
-where ``recon`` is the mean-squared error between the decoder output and the
-standardised target (mean over the batch *and* over ``n_k``, matching the MLP's
-standardised-space objective), and ``KL`` is the analytic Kullback-Leibler
-divergence between ``q(z|x) = N(mu, sigma^2)`` and the ``N(0, I)`` prior, summed
-over the latent dimensions and averaged over the batch:
+**Per-epoch history and the collapse diagnostic.** :attr:`history` records, per
+epoch, ``recon`` (full training-batch reconstruction with ``z = mu_q``),
+``recon_prior`` (the same but with ``z = mu_p``), ``latent_gap = recon_prior -
+recon``, ``kl``, ``beta_eff``, ``train_loss = recon + beta_eff * kl``, and
+``val_loss``. **``latent_gap ~ 0`` together with ``kl ~ 0`` means the latent
+transmits no information about ``y`` beyond ``x``** -- the prior mean already
+reconstructs as well as the posterior mean. That is either posterior collapse
+(KL-vanishing) or a genuinely conditionally-deterministic target; the two are
+**distinguished by the coverage diagnostics, not by this trace**. A healthy,
+informative latent shows ``latent_gap > 0`` and ``kl > 0``.
 
-    KL = mean_batch( -0.5 * sum_j (1 + logvar_j - mu_j^2 - exp(logvar_j)) ).
+**Inference.**
 
-``beta_eff`` is *annealed*: it ramps linearly from ~0 at epoch 0 up to the
-configured ``beta`` (default 1.0) over the first ``anneal_epochs`` epochs
-(default ``epochs // 4``), then holds at ``beta``. A plain ``beta = 1`` from the
-first step tends to collapse the posterior at small ``N`` (see below); the
-warm-up lets the decoder first learn to reconstruct through the latent before the
-KL term pulls the posterior towards the prior. This is a monotonic (linear) ramp;
-Lin et al. adopt a *cyclical* annealing schedule for the same purpose (avoiding
-KL-vanishing at small ``N``), and the linear ramp is the simpler special case
-used here.
+- :meth:`predict` decodes with ``z = mu_p`` (the conditional-prior mean). It is
+  deterministic and is an approximation to ``E[y | x]`` -- *exact* only when the
+  decoder is linear in ``z`` (otherwise ``E[decode(z)] != decode(E[z])`` by
+  Jensen); for a mildly non-linear decoder it is a close, and by far the cheapest,
+  point summary.
+- :meth:`predict_samples` draws ``z ~ N(mu_p, e^{logvar_p})`` from the conditional
+  prior and decodes each draw, so the across-sample spread estimates ``p(y | x)``.
+- :meth:`latents` returns ``mu_p`` by default, or the recognition code ``mu_q``
+  when a target ``y`` is supplied.
 
-**Posterior collapse (KL-vanishing).** With an expressive decoder and few
-examples, a CVAE can reconstruct while ignoring the latent: the KL term decays
-toward 0, ``sigma`` shrinks, and the predictive spread collapses to zero. That
-failure is dangerous *scientifically*, not just numerically -- a collapsed latent
-yields an artificially narrow posterior that is indistinguishable from a genuine
-"f_gas tightly constrains SP(k)" finding. Annealing is the standard mitigation,
-but it is not a guarantee, so the KL trace must stay monitorable: :attr:`history`
-records ``kl`` (and ``beta_eff``) per epoch, and a ``kl`` decaying toward 0 in the
-trace is the signal that any narrow posterior must **not** be trusted until
-collapse is ruled out.
-
-**Target scoping (documentation only).** This model is intended to be run against
-the ``k_range`` target (k in [0.5, 5.0] h/Mpc), not the full SP(k) curve. The
-full-curve high-k bins carry a known feedback-correlated bias in the within-hydro
-suppression proxy (see CLAUDE.md, "Suppression target is a proxy"); on the full
-curve, part of any predictive spread would reflect that target bias rather than
-genuine f_gas underdetermination. The CVAE imposes no target choice -- it consumes
-whatever ``td.y`` width it is given -- but the predictive spread from
-:meth:`predict_samples` is only cleanly interpretable on the proxy-sound
-k-window. No target-selection logic lives in the model; this is a documentation
-requirement.
-
-**Normalisation.** As in the MLP: raw f_gas, SP(k), and each conditioning modality
-live on very different scales, so the model standardises internally. At
-:meth:`fit` a per-column mean and standard deviation are fitted on the training
-batch for the profile ``X``, each conditioning modality present (``X_cond`` and
-``X_params``), and the target ``y``; the network sees and predicts standardised
-quantities, and :meth:`predict` / :meth:`predict_samples` invert the target
-standardisation on the way out. Zero-variance columns are given unit scale.
-
-**Determinism.** :meth:`fit` seeds torch via :func:`torch.manual_seed`, which
-gives run-to-run stability on a *fixed* backend (same machine, same device); it is
-**not** bit-reproducible across machines or backends (CUDA/MPS kernels are not
-guaranteed identical to CPU or to each other). Pass ``device="cpu"`` for a
-backend-stable comparison. :meth:`predict` is deterministic (posterior mean, no
-sampling). :meth:`predict_samples` is stochastic *by design* but seeded, so it is
-reproducible on a fixed backend for a fixed seed.
+**Normalisation / determinism.** As in :mod:`~fgas_spk.models.vib_regressor`:
+per-column standardisation fitted on the training rows (profile, each conditioning
+modality, and the target), with the target standardisation inverted on the way
+out; zero-variance columns get unit scale. :meth:`fit` seeds torch and the
+validation shuffle for run-to-run stability on a *fixed* backend (not
+bit-reproducible across backends -- pass ``device="cpu"`` to compare).
+:meth:`predict` is deterministic; :meth:`predict_samples` is stochastic by design
+but seeded (a CPU :class:`torch.Generator`, with ``eps`` moved to the device so it
+is MPS-safe), hence reproducible on a fixed backend for a fixed seed.
 
 In a run, the model is constructed from the
 :class:`~fgas_spk.experiment.RunConfig` as
-``Cvae(seed=run_config.seed, **run_config.model_params)`` and looked up by name
-via ``fgas_spk.models.REGISTRY["cvae"]``.
+``Cvae(seed=run_config.seed, **run_config.model_params)`` and looked up by name via
+``fgas_spk.models.REGISTRY["cvae"]``.
 
 Dependencies:
-    PyTorch (pinned in the project environment, an opt-in training dependency,
-    not part of the core numpy+pyyaml import surface). torch is imported **lazily
-    inside the methods** -- never at module import or at registration -- so
+    PyTorch (pinned in the project environment, an opt-in training dependency, not
+    part of the core numpy+pyyaml import surface). torch is imported **lazily inside
+    the methods** -- never at module import or at registration -- so
     ``import fgas_spk.models`` stays torch-free and the ``@register`` side effect
     runs without torch present.
 """
 
 from __future__ import annotations
 
+import copy
+import math
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -132,30 +121,29 @@ if TYPE_CHECKING:  # import only for type hints; never pulls torch/loader at run
 
 @register("cvae")
 class Cvae:
-    """Conditional VAE mapping f_gas(R) (+ conditioning) to a posterior over SP(k).
+    """Sohn-style conditional VAE mapping f_gas(R) (+ conditioning) to p(SP(k)).
 
-    Trains an ``encoder -> sampled latent -> decoder`` network by maximising a
-    KL-annealed ELBO (see the module docstring), standardising its inputs and
-    target internally. :meth:`predict` returns the deterministic posterior-mean
-    point prediction; :meth:`predict_samples` returns decoded latent samples whose
-    across-sample spread is the predictive uncertainty. Widths are inferred from
-    the first :meth:`fit` batch; nothing about the data dimensions is hardcoded.
+    Trains a ``recognition / conditional-prior / decoder`` triple by maximising a
+    KL-annealed conditional ELBO (see the module docstring), standardising its
+    inputs and target internally. :meth:`predict` returns the deterministic
+    prior-mean point prediction (an approximation to ``E[y|x]``);
+    :meth:`predict_samples` returns decoded conditional-prior samples whose
+    across-sample spread estimates ``p(y|x)``. Widths are inferred from the first
+    :meth:`fit` batch; nothing about the data dimensions is hardcoded.
 
     Args:
-        latent_dim (int): Width of the stochastic bottleneck. Defaults to 4.
-        hidden (int): Hidden-layer width on each side of the bottleneck. A
-            deliberately modest 128 by default: with a small training set, favour
-            regularisation over raw capacity. Defaults to 128.
-        n_layers (int): Number of hidden layers in the encoder and in the decoder
-            (each). Defaults to 2.
+        latent_dim (int): Width of the stochastic latent. Defaults to 4.
+        hidden (int): Hidden-layer width in each network. A deliberately modest 128
+            by default: with a small training set, favour regularisation over raw
+            capacity. Defaults to 128.
+        n_layers (int): Number of hidden layers in each of the three networks.
+            Defaults to 2.
         epochs (int): Number of training epochs. Defaults to 200.
-        lr (float): Adam/AdamW learning rate. Defaults to 1e-3.
-        weight_decay (float): Weight decay (regularisation). When > 0 the optimiser
-            is AdamW (decoupled weight decay); when 0 it is plain Adam. Defaults to
-            0.0.
-        dropout (float): Dropout probability applied after each hidden activation
-            in the encoder and decoder (regularisation). 0.0 disables it. Defaults
-            to 0.0.
+        lr (float): Adam/AdamW learning rate. Defaults to 5e-4.
+        weight_decay (float): Weight decay. When > 0 the optimiser is AdamW
+            (decoupled weight decay); when 0 it is plain Adam. Defaults to 1e-4.
+        dropout (float): Dropout probability after each hidden activation. 0.0
+            disables it. Defaults to 0.0.
         batch_size (int): Minibatch size; capped at the training-set size at fit
             time. Defaults to 128.
         beta (float): Terminal KL weight in the ELBO after annealing. Defaults to
@@ -164,9 +152,13 @@ class Cvae:
             linearly from ~0 to ``beta``. None selects ``epochs // 4``; a value
             <= 0 disables annealing (``beta`` applies from epoch 0). Defaults to
             None.
+        val_frac (float): Fraction of the rows held out for internal validation and
+            best-epoch selection (seeded shuffle, ``ceil(val_frac * n)`` rows).
+            ``0`` disables validation (train on all rows, keep the final weights).
+            Defaults to 0.1.
         seed (int): Reproducibility seed; from ``RunConfig.seed`` in a real run.
-            Threaded into :func:`torch.manual_seed` at fit and used as the default
-            sampling seed in :meth:`predict_samples`. Defaults to 0.
+            Threaded into :func:`torch.manual_seed`, the validation-holdout shuffle,
+            and the default :meth:`predict_samples` sampling seed. Defaults to 0.
         device (str | None): Torch device string (e.g. ``"cpu"``, ``"cuda"``,
             ``"mps"``). None auto-selects cuda -> mps -> cpu, mirroring
             :func:`fgas_spk.train.pick_device`. Defaults to None.
@@ -174,12 +166,13 @@ class Cvae:
             ``model_params`` key never breaks construction.
 
     Attributes:
-        history (list[dict]): One ``{"epoch", "recon", "kl", "beta_eff",
-            "train_loss"}`` dict per epoch, populated by :meth:`fit`. ``recon`` and
-            ``kl`` are the full-batch standardised-space reconstruction MSE (of the
-            posterior-mean prediction) and the analytic KL; ``beta_eff`` is that
-            epoch's annealed KL weight; ``train_loss`` is ``recon + beta_eff * kl``.
-            The ``kl`` column is the collapse diagnostic (see the module docstring).
+        history (list[dict]): One dict per epoch with keys ``epoch``, ``recon``,
+            ``kl``, ``beta_eff``, ``train_loss``, ``val_loss``, ``recon_prior`` and
+            ``latent_gap`` (see the module docstring; ``latent_gap ~ 0`` with
+            ``kl ~ 0`` flags a non-informative latent -- collapse or genuine
+            conditional determinism, told apart by the coverage diagnostics).
+        best_epoch (int | None): Epoch of lowest ``val_loss`` whose weights were
+            restored, or ``None`` when ``val_frac == 0``.
     """
 
     def __init__(
@@ -188,12 +181,13 @@ class Cvae:
         hidden: int = 128,
         n_layers: int = 2,
         epochs: int = 200,
-        lr: float = 1e-3,
-        weight_decay: float = 0.0,
+        lr: float = 5e-4,
+        weight_decay: float = 1e-4,
         dropout: float = 0.0,
         batch_size: int = 128,
         beta: float = 1.0,
         anneal_epochs: int | None = None,
+        val_frac: float = 0.1,
         seed: int = 0,
         device: str | None = None,
         **_: object,
@@ -212,18 +206,21 @@ class Cvae:
         # Resolve the anneal window now (pure arithmetic, no torch): None -> a
         # quarter of the schedule; a non-positive value disables annealing.
         self.anneal_epochs = epochs // 4 if anneal_epochs is None else anneal_epochs
+        self.val_frac = val_frac
         self.seed = seed
         self.device = device
 
         self.history: list[dict] = []
+        self.best_epoch: int | None = None
 
-        self._encoder = None
+        self._recognition = None
+        self._prior = None
         self._decoder = None
         self._device = None
         self._uses_cond: bool = False
         self._uses_params: bool = False
         self._y_was_1d: bool = False
-        # Standardisation statistics, fitted on the train batch in fit.
+        # Standardisation statistics, fitted on the train rows in fit.
         self._x_mean: np.ndarray | None = None
         self._x_std: np.ndarray | None = None
         self._cond_mean: np.ndarray | None = None
@@ -236,24 +233,26 @@ class Cvae:
     # --- public API --------------------------------------------------------
 
     def fit(self, training_data: "TrainingData") -> None:
-        """Fit the CVAE on a TrainingData bundle by maximising the annealed ELBO.
+        """Fit the conditional VAE by maximising the annealed conditional ELBO.
 
         Consumes ``training_data.X`` (profiles), ``training_data.y`` (SP(k) target,
-        the curve of shape ``(n_examples, n_k)``; a 1-D ``single_k`` target is
+        curve of shape ``(n_examples, n_k)``; a 1-D ``single_k`` target is
         supported and inverted back to 1-D at predict time), and -- when present --
-        the two conditioning modalities ``training_data.X_cond`` (observable
-        scalars) and ``training_data.X_params`` (CAMELS parameters). Both
-        conditioning modalities are standardised on their own scale and
-        concatenated into one context vector fed to the encoder *and* the decoder;
-        whichever modalities are present at fit are then required at predict.
-        Standardisation statistics are fitted here and stored for predict (see the
-        module docstring). torch is imported lazily inside this method.
+        the two conditioning modalities ``training_data.X_cond`` and
+        ``training_data.X_params``. Both are standardised on their own scale and
+        concatenated into one context fed to all three networks; whichever
+        modalities are present at fit are then required at predict.
+
+        A seeded ``val_frac`` slice of the rows is held out for validation and
+        best-epoch selection; the network trains on the remainder and its
+        lowest-validation-loss weights are restored at the end. Standardisation
+        statistics are fitted on the training rows only. torch is imported lazily
+        inside this method.
 
         Args:
             training_data (TrainingData): The model-ready arrays to fit on.
         """
         import torch
-        from torch import nn
 
         X = np.asarray(training_data.X, dtype=np.float64)
         y = np.asarray(training_data.y, dtype=np.float64)
@@ -275,16 +274,30 @@ class Cvae:
         self._y_was_1d = y.ndim == 1
         y2d = y[:, None] if self._y_was_1d else y
 
-        # Fit normalisation on the training batch (each modality on its own scale).
-        self._x_mean, self._x_std = self._fit_norm(X)
-        self._y_mean, self._y_std = self._fit_norm(y2d)
-        if X_cond is not None:
-            self._cond_mean, self._cond_std = self._fit_norm(X_cond)
-        if X_params is not None:
-            self._params_mean, self._params_std = self._fit_norm(X_params)
+        # Seeded validation holdout (backend-independent NumPy shuffle); the first
+        # ceil(val_frac * n) rows are held out. val_frac == 0 (or a degenerate
+        # split leaving no training rows) means "no validation".
+        n_total = X.shape[0]
+        n_val = math.ceil(self.val_frac * n_total) if self.val_frac > 0 else 0
+        use_val = 0 < n_val < n_total
+        if use_val:
+            shuffled = np.random.default_rng(self.seed).permutation(n_total)
+            val_rows = shuffled[:n_val]
+            train_rows = shuffled[n_val:]
+        else:
+            train_rows = np.arange(n_total)
+            val_rows = np.empty(0, dtype=int)
 
-        # Infer widths from this first batch -- no hardcoded dimensions. X_cond and
-        # X_params are concatenated into one conditioning context of width n_context.
+        # Fit normalisation on the TRAINING rows only (each modality on its own
+        # scale), so the held-out rows never leak into the standardisation.
+        self._x_mean, self._x_std = self._fit_norm(X[train_rows])
+        self._y_mean, self._y_std = self._fit_norm(y2d[train_rows])
+        if X_cond is not None:
+            self._cond_mean, self._cond_std = self._fit_norm(X_cond[train_rows])
+        if X_params is not None:
+            self._params_mean, self._params_std = self._fit_norm(X_params[train_rows])
+
+        # Infer widths from this first batch -- no hardcoded dimensions.
         n_profile = X.shape[1]
         n_cond = X_cond.shape[1] if X_cond is not None else 0
         n_params = X_params.shape[1] if X_params is not None else 0
@@ -295,70 +308,126 @@ class Cvae:
         torch.manual_seed(self.seed)
         self._device = self._resolve_device()
         self._build_modules(n_profile, n_context, n_k)
-        assert self._encoder is not None and self._decoder is not None
-        self._encoder.to(self._device)
+        assert (
+            self._recognition is not None
+            and self._prior is not None
+            and self._decoder is not None
+        )
+        self._recognition.to(self._device)
+        self._prior.to(self._device)
         self._decoder.to(self._device)
 
-        # Standardise and move to the device as float32 tensors. The conditioning
-        # tensor is the standardised [X_cond | X_params] context (None if neither).
+        # Standardise, move to the device as float32 tensors, and slice into the
+        # train / validation subsets.
         Xs = self._to_tensor(self._apply_norm(X, self._x_mean, self._x_std))
         ys = self._to_tensor(self._apply_norm(y2d, self._y_mean, self._y_std))
         context = self._context(X_cond, X_params)
         conds = self._to_tensor(context) if context is not None else None
 
-        params = list(self._encoder.parameters()) + list(self._decoder.parameters())
+        train_t = torch.as_tensor(train_rows, dtype=torch.long, device=self._device)
+        X_tr, y_tr = Xs[train_t], ys[train_t]
+        c_tr = conds[train_t] if conds is not None else None
+        if use_val:
+            val_t = torch.as_tensor(val_rows, dtype=torch.long, device=self._device)
+            X_va, y_va = Xs[val_t], ys[val_t]
+            c_va = conds[val_t] if conds is not None else None
+
+        params = (
+            list(self._recognition.parameters())
+            + list(self._prior.parameters())
+            + list(self._decoder.parameters())
+        )
         if self.weight_decay > 0:
             optimizer = torch.optim.AdamW(
                 params, lr=self.lr, weight_decay=self.weight_decay
             )
         else:
             optimizer = torch.optim.Adam(params, lr=self.lr)
-        loss_fn = nn.MSELoss()  # mean over batch and n_k -> standardised-space recon
 
-        n = Xs.shape[0]
-        batch_size = min(self.batch_size, n)
+        n_train = X_tr.shape[0]
+        batch_size = min(self.batch_size, n_train)
         self.history = []
+        self.best_epoch = None
+        best_val = math.inf
+        best_state = None
         for epoch in range(self.epochs):
             beta_eff = self._beta_eff(epoch)
-            self._encoder.train()
-            self._decoder.train()
-            perm = torch.randperm(n, device=self._device)
-            for start in range(0, n, batch_size):
+            self._train_mode()
+            perm = torch.randperm(n_train, device=self._device)
+            for start in range(0, n_train, batch_size):
                 idx = perm[start:start + batch_size]
-                xb = Xs[idx]
-                yb = ys[idx]
-                cb = conds[idx] if conds is not None else None
+                xb = X_tr[idx]
+                yb = y_tr[idx]
+                cb = c_tr[idx] if c_tr is not None else None
                 optimizer.zero_grad()
-                mu, logvar = self._encode_dist(xb, cb)
-                # Reparameterised sample at train time (global-seeded eps).
-                z = self._reparameterise(mu, logvar)
-                pred = self._decode(z, cb)
-                recon = loss_fn(pred, yb)
-                kl = self._kl(mu, logvar)
+                mu_q, logvar_q = self._recognition_dist(xb, yb, cb)
+                # Reparameterised sample from the posterior at train time.
+                z = self._reparameterise(mu_q, logvar_q)
+                pred = self._decode(z, xb, cb)
+                recon = self._recon(pred, yb)
+                mu_p, logvar_p = self._prior_dist(xb, cb)
+                kl = self._kl(mu_q, logvar_q, mu_p, logvar_p)
                 loss = recon + beta_eff * kl
                 loss.backward()
+                # Clip the gradient norm across all parameters before the step.
+                torch.nn.utils.clip_grad_norm_(params, max_norm=1.0)
                 optimizer.step()
 
-            # Per-epoch trace: full-batch standardised-space recon of the POINT
-            # prediction (posterior mean, matching predict), the analytic KL, the
-            # annealed weight, and the total. The kl column is the collapse
-            # diagnostic -- a value decaying toward 0 flags KL-vanishing.
-            self._encoder.eval()
-            self._decoder.eval()
+            # Per-epoch trace (full training-batch). recon uses z = mu_q (the
+            # posterior mean), recon_prior uses z = mu_p (the prior mean, matching
+            # predict); latent_gap = recon_prior - recon. The held-out val_loss
+            # uses the TERMINAL beta so successive epochs are compared on one fixed
+            # objective; it is the best-epoch selection criterion.
+            self._eval_mode()
             with torch.no_grad():
-                mu_all, logvar_all = self._encode_dist(Xs, conds)
-                pred_all = self._decode(mu_all, conds)
-                recon_all = float(loss_fn(pred_all, ys).item())
-                kl_all = float(self._kl(mu_all, logvar_all).item())
+                mu_q_tr, logvar_q_tr = self._recognition_dist(X_tr, y_tr, c_tr)
+                mu_p_tr, logvar_p_tr = self._prior_dist(X_tr, c_tr)
+                recon_tr = float(self._recon(self._decode(mu_q_tr, X_tr, c_tr), y_tr).item())
+                recon_prior_tr = float(
+                    self._recon(self._decode(mu_p_tr, X_tr, c_tr), y_tr).item()
+                )
+                kl_tr = float(self._kl(mu_q_tr, logvar_q_tr, mu_p_tr, logvar_p_tr).item())
+                if use_val:
+                    mu_q_va, logvar_q_va = self._recognition_dist(X_va, y_va, c_va)
+                    mu_p_va, logvar_p_va = self._prior_dist(X_va, c_va)
+                    recon_va = float(
+                        self._recon(self._decode(mu_q_va, X_va, c_va), y_va).item()
+                    )
+                    kl_va = float(
+                        self._kl(mu_q_va, logvar_q_va, mu_p_va, logvar_p_va).item()
+                    )
+                    val_loss = recon_va + self.beta * kl_va
+                else:
+                    val_loss = None
             self.history.append(
                 {
                     "epoch": epoch,
-                    "recon": recon_all,
-                    "kl": kl_all,
+                    "recon": recon_tr,
+                    "kl": kl_tr,
                     "beta_eff": beta_eff,
-                    "train_loss": recon_all + beta_eff * kl_all,
+                    "train_loss": recon_tr + beta_eff * kl_tr,
+                    "val_loss": val_loss,
+                    "recon_prior": recon_prior_tr,
+                    "latent_gap": recon_prior_tr - recon_tr,
                 }
             )
+
+            # Snapshot the best-validation weights (deep-copied so later epochs do
+            # not mutate the saved tensors).
+            if val_loss is not None and val_loss < best_val:
+                best_val = val_loss
+                self.best_epoch = epoch
+                best_state = {
+                    "recognition": copy.deepcopy(self._recognition.state_dict()),
+                    "prior": copy.deepcopy(self._prior.state_dict()),
+                    "decoder": copy.deepcopy(self._decoder.state_dict()),
+                }
+
+        # Restore the best-validation weights (no-op when val_frac == 0).
+        if best_state is not None:
+            self._recognition.load_state_dict(best_state["recognition"])
+            self._prior.load_state_dict(best_state["prior"])
+            self._decoder.load_state_dict(best_state["decoder"])
 
     def predict(
         self,
@@ -368,14 +437,11 @@ class Cvae:
     ) -> np.ndarray:
         """Predict SP(k) for profiles ``X`` (the deterministic point prediction).
 
-        Uses the posterior **mean** as the latent (``z = mu``, no sampling), so the
-        result is deterministic and directly comparable to
-        :class:`~fgas_spk.models.mlp_regressor.MlpRegressor` /
-        :mod:`~fgas_spk.models.pca_linear` on the same split. numpy in, torch on the
-        device, forward pass, numpy out, with the target standardisation inverted.
-        The conditioning modalities must match :meth:`fit`: whichever of
-        ``X_cond`` / ``X_params`` were used at fit are required here, and ones
-        unused at fit must stay None.
+        Decodes with the conditional-prior mean (``z = mu_p``, no sampling), so the
+        result is deterministic and directly comparable to the other models on the
+        same split. This is an approximation to ``E[y | x]`` -- *exact* only for a
+        decoder linear in ``z`` (otherwise ``E[decode(z)] != decode(E[z])`` by
+        Jensen's inequality). The conditioning modalities must match :meth:`fit`.
 
         Args:
             X (np.ndarray): Gas-fraction profiles, shape (n_examples, n_radii).
@@ -397,22 +463,15 @@ class Cvae:
         """
         import torch
 
-        if self._encoder is None or self._decoder is None:
+        if self._prior is None or self._decoder is None:
             raise RuntimeError("Cvae.predict called before fit.")
         self._check_modality(X_cond, X_params)
-        assert self._x_mean is not None and self._x_std is not None
 
-        x_t = self._to_tensor(
-            self._apply_norm(np.asarray(X, dtype=np.float64), self._x_mean, self._x_std)
-        )
-        context = self._context(X_cond, X_params)
-        cond_t = self._to_tensor(context) if context is not None else None
-
-        self._encoder.eval()
-        self._decoder.eval()
+        x_t, cond_t = self._prepare_inputs(X, X_cond, X_params)
+        self._eval_mode()
         with torch.no_grad():
-            mu, _ = self._encode_dist(x_t, cond_t)
-            out = self._decode(mu, cond_t)
+            mu_p, _ = self._prior_dist(x_t, cond_t)
+            out = self._decode(mu_p, x_t, cond_t)
         out = out.detach().cpu().numpy()
 
         assert self._y_mean is not None and self._y_std is not None
@@ -420,56 +479,6 @@ class Cvae:
         if self._y_was_1d:
             y = y[:, 0]
         return y
-
-    def latents(
-        self,
-        X: np.ndarray,
-        X_cond: np.ndarray | None = None,
-        X_params: np.ndarray | None = None,
-    ) -> np.ndarray:
-        """Return the posterior-mean codes ``mu`` for profiles ``X``.
-
-        Not part of the :class:`~fgas_spk.models.base.ProfileToSpk` protocol -- the
-        runner never calls it -- but it lets the latent structure be inspected after
-        training. Returns the posterior *mean* ``mu`` (no sampling), so it is
-        deterministic. The conditioning modalities must match :meth:`fit`, exactly
-        as in :meth:`predict`.
-
-        Args:
-            X (np.ndarray): Gas-fraction profiles, shape (n_examples, n_radii).
-            X_cond (np.ndarray | None): Observable conditioning scalars, shape
-                (n_examples, n_cond). Required iff the model was fit with
-                ``X_cond``. Defaults to None.
-            X_params (np.ndarray | None): CAMELS parameters, shape
-                (n_examples, n_params). Required iff the model was fit with
-                ``X_params``. Defaults to None.
-
-        Returns:
-            np.ndarray: Posterior-mean latent codes ``mu``, shape
-                (n_examples, latent_dim).
-
-        Raises:
-            RuntimeError: If called before :meth:`fit`.
-            ValueError: If the presence of ``X_cond`` or ``X_params`` does not
-                match how the model was fit.
-        """
-        import torch
-
-        if self._encoder is None:
-            raise RuntimeError("Cvae.latents called before fit.")
-        self._check_modality(X_cond, X_params)
-        assert self._x_mean is not None and self._x_std is not None
-
-        x_t = self._to_tensor(
-            self._apply_norm(np.asarray(X, dtype=np.float64), self._x_mean, self._x_std)
-        )
-        context = self._context(X_cond, X_params)
-        cond_t = self._to_tensor(context) if context is not None else None
-
-        self._encoder.eval()
-        with torch.no_grad():
-            mu, _ = self._encode_dist(x_t, cond_t)
-        return mu.detach().cpu().numpy()
 
     def predict_samples(
         self,
@@ -479,26 +488,19 @@ class Cvae:
         n_samples: int = 100,
         seed: int | None = None,
     ) -> np.ndarray:
-        """Draw decoded latent samples for profiles ``X`` (the science payload).
+        """Draw decoded conditional-prior samples for profiles ``X``.
 
-        For each example this draws ``n_samples`` latents ``z ~ q(z|x) = N(mu,
-        sigma^2)`` via the reparameterisation trick, decodes each, and inverts the
-        target standardisation. The spread **across the sample axis** (axis 0) is
-        the predictive uncertainty: how much a given f_gas(R) profile leaves SP(k)
-        underdetermined. This method is *not* part of the
-        :class:`~fgas_spk.models.base.ProfileToSpk` protocol -- the runner never
-        calls it.
+        For each example this draws ``n_samples`` latents ``z ~ p(z | x, ctx) =
+        N(mu_p, exp(logvar_p))`` from the conditional prior, decodes each, and
+        inverts the target standardisation. The spread **across the sample axis**
+        (axis 0) estimates ``p(y | x)``: how much a given f_gas(R) profile leaves
+        SP(k) underdetermined. Not part of the
+        :class:`~fgas_spk.models.base.ProfileToSpk` protocol.
 
-        The sampling is seeded (default: the model ``seed``) so it is reproducible
-        on a fixed backend; it is stochastic by design (unlike :meth:`predict`,
-        which returns the posterior mean). Dropout is disabled here, so all
-        stochasticity comes from the latent, not the network.
-
-        The spread is only cleanly interpretable on the proxy-sound k-window (the
-        ``k_range`` target, k in [0.5, 5.0] h/Mpc): on the full SP(k) curve the
-        high-k bins carry a feedback-correlated target bias (see the module
-        docstring, "Target scoping"), so part of the spread there would reflect the
-        target proxy rather than genuine f_gas underdetermination.
+        The sampling is seeded (default: the model ``seed``) via a CPU
+        :class:`torch.Generator`, with ``eps`` moved to the working device, so it is
+        reproducible on a fixed backend and MPS-safe. Dropout is disabled here, so
+        all stochasticity comes from the latent.
 
         Args:
             X (np.ndarray): Gas-fraction profiles, shape (n_examples, n_radii).
@@ -524,45 +526,43 @@ class Cvae:
         """
         import torch
 
-        if self._encoder is None or self._decoder is None:
+        if self._prior is None or self._decoder is None:
             raise RuntimeError("Cvae.predict_samples called before fit.")
         self._check_modality(X_cond, X_params)
-        assert self._x_mean is not None and self._x_std is not None
 
-        x_t = self._to_tensor(
-            self._apply_norm(np.asarray(X, dtype=np.float64), self._x_mean, self._x_std)
-        )
-        context = self._context(X_cond, X_params)
-        cond_t = self._to_tensor(context) if context is not None else None
-
+        x_t, cond_t = self._prepare_inputs(X, X_cond, X_params)
         n_examples = x_t.shape[0]
         # Seed a CPU generator explicitly: this is reproducible on every backend
-        # (torch.Generator(device="mps") is unsupported), and eps is moved to the
+        # (torch.Generator(device="mps") is unsupported); eps is moved to the
         # working device after sampling.
         seed = self.seed if seed is None else seed
         gen = torch.Generator(device="cpu")
         gen.manual_seed(int(seed))
 
-        self._encoder.eval()
-        self._decoder.eval()
+        self._eval_mode()
         with torch.no_grad():
-            mu, logvar = self._encode_dist(x_t, cond_t)  # (n_examples, latent_dim)
-            std = torch.exp(0.5 * logvar)
-            latent_dim = mu.shape[1]
+            mu_p, logvar_p = self._prior_dist(x_t, cond_t)  # (n_examples, latent_dim)
+            std = torch.exp(0.5 * logvar_p)
+            latent_dim = mu_p.shape[1]
             # Sample all draws at once, then decode as one (n_samples * n_examples)
             # batch. eps is drawn on CPU (seeded) and moved to the device.
             eps = torch.randn(
                 (n_samples, n_examples, latent_dim), generator=gen
             ).to(self._device)
-            z = mu.unsqueeze(0) + std.unsqueeze(0) * eps  # (S, N, latent_dim)
+            z = mu_p.unsqueeze(0) + std.unsqueeze(0) * eps  # (S, N, latent_dim)
             z_flat = z.reshape(n_samples * n_examples, latent_dim)
+            # The decoder consumes the profile (and context) too, so broadcast them
+            # across the sample axis to match z_flat.
+            x_flat = x_t.unsqueeze(0).expand(n_samples, -1, -1).reshape(
+                n_samples * n_examples, x_t.shape[1]
+            )
             if cond_t is not None:
                 cond_flat = cond_t.unsqueeze(0).expand(n_samples, -1, -1).reshape(
                     n_samples * n_examples, cond_t.shape[1]
                 )
             else:
                 cond_flat = None
-            out = self._decode(z_flat, cond_flat)  # (S * N, n_k)
+            out = self._decode(z_flat, x_flat, cond_flat)  # (S * N, n_k)
         out = out.detach().cpu().numpy().reshape(n_samples, n_examples, -1)
 
         assert self._y_mean is not None and self._y_std is not None
@@ -571,26 +571,98 @@ class Cvae:
             samples = samples[..., 0]  # (n_samples, n_examples)
         return samples
 
+    def latents(
+        self,
+        X: np.ndarray,
+        X_cond: np.ndarray | None = None,
+        X_params: np.ndarray | None = None,
+        y: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Return latent codes for profiles ``X``: prior means, or recognition means.
+
+        With ``y=None`` (the default, and what the runner calls) this returns the
+        conditional-**prior** mean ``mu_p`` from ``p(z | x, ctx)`` -- available at
+        inference, since it needs no target. When a target ``y`` is supplied it
+        returns the **recognition** mean ``mu_q`` from ``q(z | x, y, ctx)`` -- the
+        code the encoder assigns when it *sees* the target, useful for inspecting
+        how the posterior differs from the prior. Both are deterministic (means, no
+        sampling). Not part of the :class:`~fgas_spk.models.base.ProfileToSpk`
+        protocol. The conditioning modalities must match :meth:`fit`.
+
+        Args:
+            X (np.ndarray): Gas-fraction profiles, shape (n_examples, n_radii).
+            X_cond (np.ndarray | None): Observable conditioning scalars, shape
+                (n_examples, n_cond). Required iff the model was fit with
+                ``X_cond``. Defaults to None.
+            X_params (np.ndarray | None): CAMELS parameters, shape
+                (n_examples, n_params). Required iff the model was fit with
+                ``X_params``. Defaults to None.
+            y (np.ndarray | None): Optional SP(k) target, shape (n_examples, n_k)
+                (or 1-D for a ``single_k`` model). When given, the recognition mean
+                ``mu_q`` is returned instead of the prior mean ``mu_p``. Defaults to
+                None.
+
+        Returns:
+            np.ndarray: Latent means, shape (n_examples, latent_dim) -- ``mu_p``
+                when ``y`` is None, else ``mu_q``.
+
+        Raises:
+            RuntimeError: If called before :meth:`fit`.
+            ValueError: If the presence of ``X_cond`` or ``X_params`` does not
+                match how the model was fit.
+        """
+        import torch
+
+        if self._prior is None or self._recognition is None:
+            raise RuntimeError("Cvae.latents called before fit.")
+        self._check_modality(X_cond, X_params)
+
+        x_t, cond_t = self._prepare_inputs(X, X_cond, X_params)
+        self._eval_mode()
+        with torch.no_grad():
+            if y is None:
+                mu, _ = self._prior_dist(x_t, cond_t)
+            else:
+                assert self._y_mean is not None and self._y_std is not None
+                y_arr = np.asarray(y, dtype=np.float64)
+                y2d = y_arr[:, None] if y_arr.ndim == 1 else y_arr
+                y_t = self._to_tensor(self._apply_norm(y2d, self._y_mean, self._y_std))
+                mu, _ = self._recognition_dist(x_t, y_t, cond_t)
+        return mu.detach().cpu().numpy()
+
     # --- internals ---------------------------------------------------------
 
     def _build_modules(self, n_profile: int, n_context: int, n_k: int) -> None:
-        """Build the encoder and decoder (torch imported lazily here).
+        """Build the recognition, prior and decoder networks (torch lazy here).
 
-        The encoder emits ``2 * latent_dim`` outputs -- the ``mu`` and ``logvar``
-        heads, split in :meth:`_encode_dist`. ``n_context`` is the combined width of
-        the conditioning modalities (``X_cond`` plus ``X_params``); it widens both
-        the encoder input and the decoder input, so the decoder is conditioned on
-        the context exactly as the encoder is.
+        - recognition ``q(z|x,y,ctx)``: ``n_profile + n_k + n_context -> 2*latent``.
+        - prior ``p(z|x,ctx)``: ``n_profile + n_context -> 2*latent``; its logvar
+          head is zero-initialised so the prior starts at unit variance.
+        - decoder ``p(y|z,x,ctx)``: ``latent + n_profile + n_context -> n_k`` -- the
+          decoder consumes the profile directly, not only the context.
+
+        ``n_context`` is the combined width of the conditioning modalities
+        (``X_cond`` plus ``X_params``); 0 on the profile-only path.
         """
-        self._encoder = self._mlp(n_profile + n_context, 2 * self.latent_dim)
-        self._decoder = self._mlp(self.latent_dim + n_context, n_k)
+        import torch
+
+        self._recognition = self._mlp(n_profile + n_k + n_context, 2 * self.latent_dim)
+        self._prior = self._mlp(n_profile + n_context, 2 * self.latent_dim)
+        self._decoder = self._mlp(self.latent_dim + n_profile + n_context, n_k)
+
+        # Zero-init the prior's logvar head (the second latent_dim outputs of the
+        # final layer) so logvar_p == 0 for every input at epoch 0 -- a unit-variance
+        # prior, keeping the two-Gaussian KL well-behaved from the start.
+        final = self._prior[-1]
+        with torch.no_grad():
+            final.weight[self.latent_dim:].zero_()
+            final.bias[self.latent_dim:].zero_()
 
     def _mlp(self, in_dim: int, out_dim: int):
         """Return an ``n_layers``-deep GELU MLP ``in_dim -> hidden... -> out_dim``.
 
         A dropout layer (probability ``self.dropout``) follows each hidden
-        activation; ``dropout == 0.0`` makes it an identity, so the module matches
-        the deterministic MLP when dropout is disabled.
+        activation; ``dropout == 0.0`` makes it an identity.
         """
         from torch import nn
 
@@ -604,15 +676,33 @@ class Cvae:
         layers.append(nn.Linear(d, out_dim))
         return nn.Sequential(*layers)
 
-    def _encode_dist(self, x, cond):
-        """Encode ``concat(x, cond)`` (or ``x`` alone) to ``(mu, logvar)``."""
+    def _recognition_dist(self, x, y, cond):
+        """Recognition ``q(z|x,y,ctx)`` -> ``(mu_q, logvar_q)`` (logvar clamped)."""
+        import torch
+
+        parts = [x, y] if cond is None else [x, y, cond]
+        assert self._recognition is not None
+        h = self._recognition(torch.cat(parts, dim=1))
+        mu, logvar = torch.chunk(h, 2, dim=1)
+        return mu, torch.clamp(logvar, -8.0, 8.0)
+
+    def _prior_dist(self, x, cond):
+        """Conditional prior ``p(z|x,ctx)`` -> ``(mu_p, logvar_p)`` (logvar clamped)."""
         import torch
 
         enc_in = x if cond is None else torch.cat([x, cond], dim=1)
-        assert self._encoder is not None
-        h = self._encoder(enc_in)
+        assert self._prior is not None
+        h = self._prior(enc_in)
         mu, logvar = torch.chunk(h, 2, dim=1)
-        return mu, logvar
+        return mu, torch.clamp(logvar, -8.0, 8.0)
+
+    def _decode(self, z, x, cond):
+        """Decode ``concat(z, x, ctx)`` (or ``concat(z, x)``) to standardised SP(k)."""
+        import torch
+
+        parts = [z, x] if cond is None else [z, x, cond]
+        assert self._decoder is not None
+        return self._decoder(torch.cat(parts, dim=1))
 
     def _reparameterise(self, mu, logvar):
         """Sample ``z = mu + exp(0.5 * logvar) * eps`` with ``eps ~ N(0, I)``.
@@ -626,35 +716,67 @@ class Cvae:
         eps = torch.randn_like(std)
         return mu + std * eps
 
-    def _decode(self, z, cond):
-        """Decode ``concat(z, cond)`` (or ``z`` alone) to standardised SP(k)."""
-        import torch
+    @staticmethod
+    def _recon(pred, y):
+        """Reconstruction term: squared error summed over ``n_k``, mean over batch.
 
-        dec_in = z if cond is None else torch.cat([z, cond], dim=1)
-        assert self._decoder is not None
-        return self._decoder(dec_in)
+        ``((pred - y)**2).sum(dim=1).mean()`` -- ``n_k`` times the plain
+        mean-over-all-elements MSE, matching the ELBO's per-example log-likelihood
+        convention. Returns a scalar tensor.
+        """
+        return ((pred - y) ** 2).sum(dim=1).mean()
 
     @staticmethod
-    def _kl(mu, logvar):
-        """Analytic KL(q(z|x) || N(0, I)): summed over latents, mean over batch.
+    def _kl(mu_q, logvar_q, mu_p, logvar_p):
+        """Analytic KL( N(mu_q, e^{logvar_q}) || N(mu_p, e^{logvar_p}) ).
 
-        ``KL = mean_batch( -0.5 * sum_j (1 + logvar_j - mu_j^2 - exp(logvar_j)) )``,
-        the standard closed form for a diagonal-Gaussian posterior against a
-        standard-normal prior. Returns a scalar tensor.
+        Summed over the latent dims and averaged over the batch::
+
+            0.5 * sum_j ( logvar_p - logvar_q
+                  + (e^{logvar_q} + (mu_q - mu_p)^2) / e^{logvar_p} - 1 )
+
+        Reduces to ``KL(q || N(0, I))`` when ``mu_p = 0`` and ``logvar_p = 0``.
+        Returns a scalar tensor.
         """
-        kl_per_example = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp()).sum(dim=1)
+        kl_per_example = 0.5 * (
+            logvar_p
+            - logvar_q
+            + (logvar_q.exp() + (mu_q - mu_p).pow(2)) / logvar_p.exp()
+            - 1.0
+        ).sum(dim=1)
         return kl_per_example.mean()
 
     def _beta_eff(self, epoch: int) -> float:
         """Return the annealed KL weight at ``epoch``.
 
         Ramps linearly from 0 at epoch 0 to ``beta`` at epoch ``anneal_epochs``,
-        then holds at ``beta``. A non-positive ``anneal_epochs`` disables annealing
-        (``beta`` from epoch 0). See the module docstring for the rationale.
+        then holds at ``beta``. A non-positive ``anneal_epochs`` disables annealing.
         """
         if self.anneal_epochs <= 0:
             return self.beta
         return self.beta * min(1.0, epoch / self.anneal_epochs)
+
+    def _train_mode(self) -> None:
+        """Put all three networks in train mode."""
+        self._recognition.train()
+        self._prior.train()
+        self._decoder.train()
+
+    def _eval_mode(self) -> None:
+        """Put all three networks in eval mode."""
+        self._recognition.eval()
+        self._prior.eval()
+        self._decoder.eval()
+
+    def _prepare_inputs(self, X, X_cond, X_params):
+        """Standardise ``X`` and the context and return them as device tensors."""
+        assert self._x_mean is not None and self._x_std is not None
+        x_t = self._to_tensor(
+            self._apply_norm(np.asarray(X, dtype=np.float64), self._x_mean, self._x_std)
+        )
+        context = self._context(X_cond, X_params)
+        cond_t = self._to_tensor(context) if context is not None else None
+        return x_t, cond_t
 
     def _resolve_device(self):
         """Resolve the torch device (cuda -> mps -> cpu), honouring ``device``."""
@@ -686,9 +808,9 @@ class Cvae:
         """Standardise and concatenate the conditioning modalities into one array.
 
         Returns the ``[X_cond | X_params]`` context (each modality standardised
-        with its stored statistics) fed to both the encoder and the decoder, or
-        None if neither modality is in use. Presence is assumed already validated
-        by :meth:`_check_modality`.
+        with its stored statistics) fed to all three networks, or None if neither
+        modality is in use. Presence is assumed already validated by
+        :meth:`_check_modality`.
 
         Args:
             X_cond (np.ndarray | None): Observable conditioning scalars, or None.

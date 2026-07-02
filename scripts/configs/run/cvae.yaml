@@ -1,35 +1,43 @@
-# RunConfig for the conditional VAE model (fgas_spk.models.cvae).
+# RunConfig for the Sohn-style conditional VAE (fgas_spk.models.cvae).
 # Pair this with a DataConfig (e.g. scripts/configs/data/config.yaml) and run:
 #
 #     python scripts/run.py --config-data scripts/configs/data/config.yaml \
 #                           --config-run  scripts/configs/run/cvae.yaml
 #
-# The CVAE is the probabilistic successor to mlp_regressor: predict() returns the
-# posterior-mean point prediction (comparable to the MLP on the same split), and
-# the model additionally exposes a predictive spread via predict_samples(). That
-# spread is only cleanly interpretable on the proxy-sound k_range target
-# (k in [0.5, 5.0] h/Mpc) -- set that in the DataConfig, not here.
+# This is a genuine conditional generative model of p(SP(k) | f_gas(R), context):
+# a recognition network q(z|x,y), a conditional prior p(z|x), and a decoder
+# p(y|z,x). Unlike vib_regressor (a regularised point predictor), its
+# predict_samples() draws z ~ p(z|x) and decodes them, so the across-sample spread
+# is an estimate of how tightly a given f_gas(R) profile constrains SP(k). predict()
+# returns the deterministic prior-mean point prediction (an approximation to
+# E[y|x]). That spread is only cleanly interpretable on the proxy-sound k_range
+# target (k in [0.5, 5.0] h/Mpc) -- set that in the DataConfig, not here. Because it
+# exposes predict_samples, the runner writes the probabilistic coverage /
+# spread-vs-error figures for this model (it does not for vib_regressor).
 #
 # model_params below are the model's own defaults, listed explicitly so the
 # recorded config_run.yaml reflects exactly what trained.
 
 model: cvae                   # registry name (fgas_spk.models.REGISTRY)
 model_params:
-  latent_dim: 4               # width of the stochastic bottleneck
+  latent_dim: 4               # width of the stochastic latent
   hidden: 128                 # modest width: favour regularisation over capacity
-  n_layers: 2                 # hidden layers in the encoder and decoder (each)
+  n_layers: 2                 # hidden layers in each of the three networks
   epochs: 200
-  lr: 1.0e-3
-  weight_decay: 0.0           # >0 -> AdamW (decoupled); 0 -> plain Adam
+  lr: 5.0e-4
+  weight_decay: 1.0e-4        # >0 -> AdamW (decoupled); 0 -> plain Adam
   dropout: 0.0                # dropout after each hidden activation (regulariser)
   batch_size: 128
-  beta: 1.0                   # terminal KL weight in the ELBO after annealing
+  beta: 1.0                  # terminal KL weight in the ELBO after annealing
   anneal_epochs: null         # null -> epochs // 4 (= 50); linear KL warm-up
+  val_frac: 0.1               # internal holdout for best-epoch restore (0 disables)
 
 seed: 0                    # reproducibility seed (threaded into torch.manual_seed)
 
-# Grouped-by-sim_index split. Matches scripts/configs/run/mlp_regressor.yaml so a
-# CVAE-vs-MLP comparison runs on the same folds. val_frac: 0.0 -> two-way split.
+# Grouped-by-sim_index split of the DATA into train/val/test folds. Distinct from
+# model_params.val_frac above (an internal holdout *within* the training fold for
+# best-epoch selection). Matches scripts/configs/run/vib_regressor.yaml so a
+# cvae-vs-vib comparison runs on the same folds. val_frac: 0.0 -> two-way split.
 split:
   train_frac: 0.7
   val_frac: 0.1

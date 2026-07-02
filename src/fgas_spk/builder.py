@@ -134,7 +134,8 @@ def _load_one_simulation(
     fgas = fgas[:, :, order]
     halo_masses = halo_masses[order]
 
-    radii_mpch = np.asarray(data["r12_to_mpch"])
+    # radii_mpch = np.asarray(data["r12_to_mpch"])
+    radii_mpch = np.asarray(data["r12_mpch"])
     if radii_mpch.ndim > 1:  # some files store one row per sim; collapse it
         radii_mpch = radii_mpch[0]
 

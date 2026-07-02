@@ -19,5 +19,6 @@ echo "run.py"
 
 python -u run.py --config-data configs/data/config.yaml --config-run configs/run/pca_reference.yaml
 python -u run.py --config-data configs/data/config.yaml --config-run configs/run/mlp_regressor.yaml
+python -u run.py --config-data configs/data/config.yaml --config-run configs/run/vib_regressor.yaml
 python -u run.py --config-data configs/data/config.yaml --config-run configs/run/cvae.yaml
  

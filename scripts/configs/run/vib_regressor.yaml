@@ -1,0 +1,51 @@
+# RunConfig for the deep-VIB regressor (fgas_spk.models.vib_regressor).
+# Pair this with a DataConfig (e.g. scripts/configs/data/config.yaml) and run:
+#
+#     python scripts/run.py --config-data scripts/configs/data/config.yaml \
+#                           --config-run  scripts/configs/run/vib_regressor.yaml
+#
+# vib_regressor is the deterministic point-prediction model formerly registered as
+# "cvae": an encoder/decoder MLP whose stochastic bottleneck + KL-to-N(0,I) act
+# purely as a regulariser. predict() returns the posterior-mean point prediction
+# (comparable to mlp_regressor / pca_linear on the same split). It exposes NO
+# predict_samples: its latent-sample spread is a regularisation noise floor, not an
+# estimate of p(SP(k)|f_gas). For a predictive spread, use the Sohn-style
+# conditional VAE in scripts/configs/run/cvae.yaml instead. Because it has no
+# predict_samples, the runner writes NO coverage / spread-vs-error figures for it
+# (only the point-prediction, per-curve and latent-norm diagnostics).
+#
+# model_params below are the model's own defaults, listed explicitly so the
+# recorded config_run.yaml reflects exactly what trained.
+
+model: vib_regressor          # registry name (fgas_spk.models.REGISTRY)
+model_params:
+  latent_dim: 4               # width of the stochastic bottleneck
+  hidden: 128                 # modest width: favour regularisation over capacity
+  n_layers: 2                 # hidden layers in the encoder and decoder (each)
+  epochs: 200
+  lr: 5.0e-4
+  weight_decay: 1.0e-4        # >0 -> AdamW (decoupled); 0 -> plain Adam
+  dropout: 0.0                # dropout after each hidden activation (regulariser)
+  batch_size: 128
+  beta: 1.0                   # terminal KL weight in the ELBO after annealing
+  anneal_epochs: null         # null -> epochs // 4 (= 50); linear KL warm-up
+  val_frac: 0.1               # internal holdout for best-epoch restore (0 disables)
+
+seed: 0                    # reproducibility seed (threaded into torch.manual_seed)
+
+# Grouped-by-sim_index split of the DATA into train/val/test folds. Distinct from
+# model_params.val_frac above (an internal holdout *within* the training fold for
+# best-epoch selection). Matches scripts/configs/run/cvae.yaml so a vib-vs-cvae
+# comparison runs on the same folds.
+split:
+  train_frac: 0.7
+  val_frac: 0.1
+  test_frac: 0.2
+  seed: 100
+
+# Held-out evaluation diagnostics (post-fit only; do not affect training).
+evaluation:
+  suppressed_thresholds: [0.95, 0.9, 0.8]   # pooled held-out RMSE where TRUE SP(k) < t
+
+# Scratch write root. null defers to $FGAS_SCRATCH_ROOT (or --scratch-root).
+write_root: null
