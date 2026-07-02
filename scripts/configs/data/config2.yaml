@@ -1,0 +1,48 @@
+# Example DataConfig for fgas_spk.loader, populated with the loader's current
+# defaults. Run a dry-run with:
+#
+#     python -m fgas_spk.loader --config scripts/configs/data/config.yaml
+#
+# Dataset selection: give EITHER the store fields below (resolved via
+# resolve_dataset_path, so you never type the path beyond project_root) OR a
+# single explicit `path:` to a saved .npz -- not both.
+
+# --- Option A: resolve from store fields ---
+# project_root null defers the read root to fgas_spk.paths.resolve_data_root
+# (-> $FGAS_DATA_ROOT, else the repo, where the datasets are git-tracked). The
+# runner fills it before the loader runs. Set an explicit path, or pass
+# --data-root, to read datasets from elsewhere (e.g. a scratch store).
+# project_root: null
+# project_root: /Users/hliu/projects/repos/fgas-to-pk-ml/ # local
+project_root: /pscratch/sd/r/rhliu/projects/fgas-to-pk-ml/ # NERSC Perlmutter
+suite: CAMELS-IllustrisTNG-L50n512-SB35
+snapshot: 74
+redshift: 0.47
+source: lindajin
+rank: m500            # on-disk rank token (m500 / mstar / frozen)
+tag: '20260702'          # or an explicit tag like 20260617 / v1 (preferred for reproducibility)
+
+# --- Option B: instead of the seven fields above, give an explicit file ---
+# path: /pscratch/.../fgas_spk__...__v1.npz
+
+# --- Simulation subset (by simulation id; null = all, in stored order) ---
+sim_ids: null
+
+# --- Inputs / features ---
+number_density_indices: [2]   # null = all five number densities
+radial_range_mpch: null        # null = full radial range; e.g. [0.1, 2.0] to crop (Mpc/h)
+include_nd_feature: false       # number density -> X_cond
+include_mean_halo_mass: false  # stack's mean M_500c [M_sun/h] -> X_cond
+include_camels_params: false    # CAMELS params -> X_params (on by default; raises if the dataset lacks them)
+# Subset which CAMELS parameter columns enter X_params (only when include_camels_params: true).
+# Give indices, names, or both (unioned, de-duplicated, sorted ascending by column); null = all 35.
+# Names resolve against the dataset's stamped names, else the suite registry
+# (fgas_spk.camels_params.CAMELS_PARAM_NAMES). Index selection needs no name list.
+camels_param_indices: null      # e.g. [0, 6, 7]
+# camels_param_names: [Omega0, sigma8, OmegaBaryon, HubbleParam, n_s]        # e.g. [Omega0, OmegaBaryon, HubbleParam]
+camels_param_names: null        # e.g. [Omega0, OmegaBaryon, HubbleParam]
+
+# --- Target ---
+target_mode: k_range   # one of: curve | single_k | k_range
+k_target: null       # required for single_k (nearest-k bin), in h/Mpc
+k_range: [0.5, 5.0]        # required for k_range, e.g. [0.5, 5.0] (inclusive), in h/Mpc

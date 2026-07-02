@@ -21,6 +21,7 @@ from fgas_spk.models.base import REGISTRY, ProfileToSpk, register
 # which is what populates REGISTRY. Add new plugins to this list. These modules
 # import their heavy deps (torch, sklearn) lazily inside methods, so importing
 # this package stays torch-free -- only the @register side effect runs here.
+from fgas_spk.models import mlp  # noqa: F401  (registers "mlp")
 from fgas_spk.models import mlp_regressor  # noqa: F401  (registers "mlp_regressor")
 from fgas_spk.models import pca_linear  # noqa: F401  (registers "pca_linear")
 from fgas_spk.models import vib_regressor  # noqa: F401  (registers "vib_regressor")
@@ -30,6 +31,7 @@ __all__ = [
     "REGISTRY",
     "ProfileToSpk",
     "register",
+    "mlp",
     "mlp_regressor",
     "pca_linear",
     "vib_regressor",

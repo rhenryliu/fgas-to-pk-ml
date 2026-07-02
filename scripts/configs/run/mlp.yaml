@@ -1,0 +1,34 @@
+# RunConfig for the plain feed-forward MLP model (fgas_spk.models.mlp).
+# The un-bottlenecked sibling of mlp_regressor: one Linear -> hidden... -> n_k
+# stack, no encoder/latent/decoder split. Pair this with a DataConfig
+# (e.g. scripts/configs/data/config.yaml) and run:
+#
+#     python scripts/run.py --config-data scripts/configs/data/config.yaml \
+#                           --config-run  scripts/configs/run/mlp.yaml
+#
+# or the worked example: python scripts/run_pca_demo.py
+
+model: mlp                    # registry name (fgas_spk.models.REGISTRY)
+model_params:
+  hidden: 256
+  n_layers: 4
+  epochs: 200
+  lr: 1.0e-3
+  weight_decay: 0.3
+  batch_size: 128
+
+seed: 100                    # reproducibility seed (threaded into torch.manual_seed)
+
+# Grouped-by-sim_index split. val_frac: 0.0 means a two-way train/test split.
+split:
+  train_frac: 0.7
+  val_frac: 0.1
+  test_frac: 0.2
+  seed: 100
+
+# Held-out evaluation diagnostics (post-fit only; do not affect training).
+evaluation:
+  suppressed_thresholds: [0.95, 0.9, 0.8]   # pooled held-out RMSE where TRUE SP(k) < t
+
+# Scratch write root. null defers to $FGAS_SCRATCH_ROOT (or --scratch-root).
+write_root: null
