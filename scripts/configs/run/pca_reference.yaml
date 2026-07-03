@@ -8,7 +8,7 @@
 
 model: pca_linear          # registry name (fgas_spk.models.REGISTRY)
 model_params:
-  n_components: 16          # PCA components of the f_gas profile (capped at fit time)
+  n_components: 25          # PCA components of the f_gas profile (capped at fit time)
 seed: 0                    # reproducibility seed (threaded into PCA random_state)
 
 # Grouped-by-sim_index split. val_frac: 0.0 means a two-way train/test split.

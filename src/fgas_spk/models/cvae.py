@@ -655,8 +655,8 @@ class Cvae:
         # prior, keeping the two-Gaussian KL well-behaved from the start.
         final = self._prior[-1]
         with torch.no_grad():
-            final.weight[self.latent_dim:].zero_()
-            final.bias[self.latent_dim:].zero_()
+            final.weight[self.latent_dim:].zero_() # type: ignore[union-attr]
+            final.bias[self.latent_dim:].zero_() # type: ignore[union-attr]
 
     def _mlp(self, in_dim: int, out_dim: int):
         """Return an ``n_layers``-deep GELU MLP ``in_dim -> hidden... -> out_dim``.
@@ -758,15 +758,15 @@ class Cvae:
 
     def _train_mode(self) -> None:
         """Put all three networks in train mode."""
-        self._recognition.train()
-        self._prior.train()
-        self._decoder.train()
+        self._recognition.train() # type: ignore[union-attr]
+        self._prior.train() # type: ignore[union-attr]
+        self._decoder.train() # type: ignore[union-attr]
 
     def _eval_mode(self) -> None:
         """Put all three networks in eval mode."""
-        self._recognition.eval()
-        self._prior.eval()
-        self._decoder.eval()
+        self._recognition.eval() # type: ignore[union-attr]
+        self._prior.eval() # type: ignore[union-attr]
+        self._decoder.eval() # type: ignore[union-attr]
 
     def _prepare_inputs(self, X, X_cond, X_params):
         """Standardise ``X`` and the context and return them as device tensors."""
