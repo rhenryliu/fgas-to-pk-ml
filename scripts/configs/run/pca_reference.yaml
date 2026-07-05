@@ -11,12 +11,14 @@ model_params:
   n_components: 25          # PCA components of the f_gas profile (capped at fit time)
 seed: 0                    # reproducibility seed (threaded into PCA random_state)
 
-# Grouped-by-sim_index split. val_frac: 0.0 means a two-way train/test split.
+# Grouped-by-sim_index split. Pinned to the dual-VAE evaluation context
+# (staged spec v2) so all baseline comparisons share folds with the cvae /
+# vib_regressor / mlp / mlp_regressor configs.
 split:
-  train_frac: 0.8
-  val_frac: 0.0
+  train_frac: 0.7
+  val_frac: 0.1
   test_frac: 0.2
-  seed: 0
+  seed: 100
 
 # Held-out evaluation diagnostics (post-fit only; do not affect training).
 evaluation:
