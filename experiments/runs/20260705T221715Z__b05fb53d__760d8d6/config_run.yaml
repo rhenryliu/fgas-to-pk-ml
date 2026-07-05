@@ -1,0 +1,26 @@
+model: pca_x_recon
+model_params:
+  n_components_grid:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+  - 8
+  - 9
+  - 10
+  svd_solver: full
+seed: 0
+split:
+  train_frac: 0.7
+  val_frac: 0.1
+  test_frac: 0.2
+  seed: 100
+evaluation:
+  suppressed_thresholds:
+  - 0.95
+  - 0.9
+  - 0.8
+write_root: null

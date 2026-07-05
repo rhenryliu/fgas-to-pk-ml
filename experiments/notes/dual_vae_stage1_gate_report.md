@@ -1,4 +1,73 @@
-# Dual-VAE Stage 1 gate report
+# Dual-VAE Stage 1 gate report — re-run on tag 20260702 (amendment A2)
+
+Spec amendment of 2026-07-05 (`docs/dual_vae_staged_spec.md`, commit `5d6fe55`)
+repinned the context from tag `20260617` to `20260702` and added the B5
+suppressed-regime truncation diagnostic. This section is the authoritative
+Stage 1 gate evaluation; the original 20260617 report is kept below, marked
+superseded (amendment A3: no cross-tag comparisons).
+
+## A4 — dataset diff, tag 20260617 -> 20260702
+
+From the embedded `__meta__` and the arrays themselves:
+
+- **Shapes changed (X modality only):** the radial grid was re-binned from 17
+  points (0.117-20 Mpc/h, dense inner sampling) to 20 points (0.1-20 Mpc/h,
+  near-uniform inner spacing then log-spaced outer); `fgas` / `fgas_std` are
+  (1024, 5, 20) accordingly. The new grid does **not** contain the old radii
+  (a re-binning, not an extension), so X values are not comparable across tags.
+- **Y unchanged:** `suppression` (1024, 255) is bitwise-identical between tags;
+  the k grid is identical. `camels_params` is bitwise-identical.
+- **Parameter stamping added:** the new tag stamps `camels_param_names`
+  (all 35, matching the registry order); the old tag had none.
+- Meta fields changed: `created_utc`, `n_radii` 17 -> 20, `tag`, plus the
+  `arrays`/`camels_param_names` entries above. No change to suite, snapshot,
+  redshift, source, rank, or provenance fields.
+
+Since shapes changed, this is stated here (and was reported to the maintainer)
+before any Stage 2 work on the new tag. Nothing in the stage scripts hardcodes
+widths; all dimensions are inferred at load/fit time.
+
+## Gate G1.1 (new tag) — PASS
+
+- `pca_x_recon`: run `20260705T221711Z__b05fb53d__760d8d6` (20 radial bins).
+  Val recon RMSE n=1..10: 8.7166, 8.7052, 8.7041, 8.7007, 8.6969, 8.2501,
+  8.2291, 8.2224, 8.2026, 8.1872. Still heavy-tail dominated (see the
+  superseded report's observation 1, which carries over qualitatively).
+- `pca_y_recon`: run `20260705T221713Z__d5b9b15c__760d8d6`. Val recon RMSE
+  n=1..10 identical to the 20260617 numbers (0.012134, 0.0028746, 0.0013369,
+  0.0010034, ...) — expected, since the suppression content is bitwise
+  identical; a useful cross-tag consistency check (reported, not gated).
+  New B5 suppressed-regime truncation error (val, truth-masked): at n=2,
+  RMSE(SP<0.95) = 0.00387, RMSE(SP<0.9) = 0.00433, RMSE(SP<0.8) = 0.00494
+  (n_bins 1240/671/234; at n=3: 0.00185/0.00191/0.00235) — the truncation
+  error is indeed ~1.5-1.7x larger in the deeply-suppressed bins than
+  globally (0.00287 at n=2), confirming the heterogeneity B5 was added to
+  expose. Full per-n table in the run summary.
+- Reproducibility: second invocation (`20260705T221715Z__b05fb53d__760d8d6`,
+  `20260705T221716Z__d5b9b15c__760d8d6`) bitwise-identical tables.
+
+## Gate G1.2 (new tag) — PASS
+
+`experiments/notes/dual_vae_baseline_table.md` regenerated on tag 20260702
+(old table kept under the superseded heading). Val-fold global RMSE:
+`mlp` **0.042921** (`20260705T221753Z__e18a8464__760d8d6`, now the best
+cross-modal baseline — the re-binned profiles are markedly more informative
+for the plain MLP), `mlp_regressor` 0.050388
+(`20260705T221749Z__5e0c03f0__760d8d6`), `pca_linear` 0.061429
+(`20260705T221739Z__c9583454__760d8d6`).
+
+**G2.1' reference (fixed here):** best Stage 1 cross-modal val RMSE on this
+tag = 0.042921 (`mlp`), so the Stage 2 codec-adequacy bar is
+0.1 x 0.042921 = **0.0042921** raw-scale val reconstruction RMSE.
+
+Framing guard (amendment D3): the low PCA-on-Y dimensionality concerns the
+y-manifold's intrinsic geometry only; the f_gas -> SP(k) *map* is genuinely
+nonlinear (mlp vs pca_linear: 0.0429 vs 0.0614 on this tag). The two claims
+are kept distinct in all notes.
+
+---
+
+# [SUPERSEDED — tag 20260617] Dual-VAE Stage 1 gate report
 
 Staged spec v2, Stage 1 (PCA dimensionality baselines and baseline-table
 refresh). Implementation committed at `fe6a28c` before any run (GR8), so every
