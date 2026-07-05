@@ -24,9 +24,11 @@ dropout, as in :mod:`~fgas_spk.models.cvae`.
 **Likelihood -- Gaussian NLL with a learned noise head (decision F0.2).** The
 per-bin ``obs_logvar`` (initialised to 0.0, i.e. unit variance on the
 standardised scale = one per-bin standard deviation on the raw scale) makes the
-reconstruction a proper heteroscedastic Gaussian log-likelihood, so ``beta = 1``
-is the principled ELBO weight rather than a tuning knob. :meth:`obs_sigma`
-exposes the fitted noise on the **raw** target scale. Note: the repo's ``cvae``
+reconstruction a proper heteroscedastic Gaussian log-likelihood. ``beta`` is a
+**tuned hyperparameter** (F0.2 as amended 2026-07-05, B1): for a compression
+autoencoder it prices information rate, so the spec sweeps it over
+{1, 0.1, 0.01, 0.001} per usage. :meth:`obs_sigma` exposes the fitted noise on
+the **raw** target scale. Note: the repo's ``cvae``
 plugin does *not* carry this head (its known under-coverage is the motivation);
 this is the design the spec prescribes for the dual-VAE components.
 
@@ -94,9 +96,9 @@ class GaussianVAE:
             Defaults to 0.0.
         batch_size (int): Minibatch size, capped at the training-set size.
             Defaults to 128.
-        beta (float): Terminal KL weight after annealing. With the learned
-            noise head this is the principled ELBO value 1.0 (decision F0.2);
-            change it only as a deliberate, recorded experiment. Defaults to 1.0.
+        beta (float): Terminal KL weight after annealing. A tuned
+            hyperparameter (F0.2 as amended, B1), swept over
+            {1, 0.1, 0.01, 0.001} by the stage scripts. Defaults to 1.0.
         anneal_epochs (int | None): Linear KL warm-up length; None selects
             ``epochs // 4``; <= 0 disables annealing. Defaults to None.
         val_frac (float): Internal holdout fraction for best-epoch restore
@@ -587,3 +589,389 @@ class GaussianVAE:
     def _invert_norm(a: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
         """Invert the standardisation: map standardised ``a`` back to raw scale."""
         return np.asarray(a, dtype=np.float64) * std + mean
+
+
+class _LatentMapBase:
+    """Shared machinery for the torch latent-map rungs (MLP and MDN).
+
+    Maps frozen VAE-X posterior means ``z1`` to frozen VAE-Y posterior means
+    ``z2`` (Stage 4 of the dual-VAE staged spec; decision F0.5: trained on
+    posterior means, not samples). Inputs and targets are standardised per
+    column on the training rows (the frozen codes are not unit-scale at low
+    beta); an internal seeded ``val_frac`` holdout drives best-epoch restore,
+    as in :class:`GaussianVAE`. torch is imported lazily inside methods.
+    """
+
+    def __init__(
+        self,
+        hidden: int = 128,
+        n_layers: int = 2,
+        epochs: int = 2000,
+        lr: float = 1e-3,
+        weight_decay: float = 1e-4,
+        batch_size: int = 128,
+        val_frac: float = 0.1,
+        seed: int = 0,
+        device: str | None = None,
+        **_: object,
+    ) -> None:
+        self.hidden = hidden
+        self.n_layers = n_layers
+        self.epochs = epochs
+        self.lr = lr
+        self.weight_decay = weight_decay
+        self.batch_size = batch_size
+        self.val_frac = val_frac
+        self.seed = seed
+        self.device = device
+
+        self.history: list[dict] = []
+        self.best_epoch: int | None = None
+        self._net = None
+        self._device = None
+        self._in_mean = self._in_std = None
+        self._out_mean = self._out_std = None
+
+    # -- template hooks implemented by the rungs ----------------------------
+
+    def _out_width(self, d_out: int) -> int:
+        """Network output width for a ``d_out``-dimensional target."""
+        raise NotImplementedError
+
+    def _loss(self, raw, target):
+        """Per-batch training loss from raw network output and target."""
+        raise NotImplementedError
+
+    # -- shared fit ----------------------------------------------------------
+
+    def fit(self, z1: np.ndarray, z2: np.ndarray) -> None:
+        """Fit the map on ``(z1, z2)`` posterior-mean pairs.
+
+        Args:
+            z1 (np.ndarray): Inputs, shape (n_examples, d1).
+            z2 (np.ndarray): Targets, shape (n_examples, d2).
+        """
+        import torch
+
+        z1 = np.asarray(z1, dtype=np.float64)
+        z2 = np.asarray(z2, dtype=np.float64)
+
+        n_total = z1.shape[0]
+        n_val = math.ceil(self.val_frac * n_total) if self.val_frac > 0 else 0
+        use_val = 0 < n_val < n_total
+        if use_val:
+            shuffled = np.random.default_rng(self.seed).permutation(n_total)
+            val_rows, train_rows = shuffled[:n_val], shuffled[n_val:]
+        else:
+            train_rows = np.arange(n_total)
+
+        self._in_mean, self._in_std = GaussianVAE._fit_norm(z1[train_rows])
+        self._out_mean, self._out_std = GaussianVAE._fit_norm(z2[train_rows])
+
+        torch.manual_seed(self.seed)
+        self._device = self._resolve_device()
+        self._d_out = z2.shape[1]
+        self._build(z1.shape[1], self._d_out)
+
+        z1s = self._to_tensor(GaussianVAE._apply_norm(z1, self._in_mean, self._in_std))
+        z2s = self._to_tensor(GaussianVAE._apply_norm(z2, self._out_mean, self._out_std))
+        tr = torch.as_tensor(train_rows, dtype=torch.long, device=self._device)
+        x_tr, y_tr = z1s[tr], z2s[tr]
+        if use_val:
+            va = torch.as_tensor(val_rows, dtype=torch.long, device=self._device)
+            x_va, y_va = z1s[va], z2s[va]
+
+        if self.weight_decay > 0:
+            optimizer = torch.optim.AdamW(
+                self._net.parameters(), lr=self.lr, weight_decay=self.weight_decay
+            )
+        else:
+            optimizer = torch.optim.Adam(self._net.parameters(), lr=self.lr)
+
+        n_train = x_tr.shape[0]
+        batch_size = min(self.batch_size, n_train)
+        self.history = []
+        self.best_epoch = None
+        best_val = math.inf
+        best_state = None
+        for epoch in range(self.epochs):
+            self._net.train()
+            perm = torch.randperm(n_train, device=self._device)
+            for start in range(0, n_train, batch_size):
+                idx = perm[start:start + batch_size]
+                optimizer.zero_grad()
+                loss = self._loss(self._net(x_tr[idx]), y_tr[idx])
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self._net.parameters(), max_norm=1.0)
+                optimizer.step()
+
+            self._net.eval()
+            with torch.no_grad():
+                train_loss = float(self._loss(self._net(x_tr), y_tr).item())
+                val_loss = (
+                    float(self._loss(self._net(x_va), y_va).item())
+                    if use_val else None
+                )
+            self.history.append(
+                {"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss}
+            )
+            if val_loss is not None and val_loss < best_val:
+                best_val = val_loss
+                self.best_epoch = epoch
+                best_state = copy.deepcopy(self._net.state_dict())
+
+        if best_state is not None:
+            self._net.load_state_dict(best_state)
+
+    # -- shared internals ----------------------------------------------------
+
+    def _build(self, d_in: int, d_out: int) -> None:
+        """Build the GELU MLP trunk (torch imported lazily here)."""
+        from torch import nn
+
+        layers: list = []
+        d = d_in
+        for _ in range(self.n_layers):
+            layers.append(nn.Linear(d, self.hidden))
+            layers.append(nn.GELU())
+            d = self.hidden
+        layers.append(nn.Linear(d, self._out_width(d_out)))
+        self._net = nn.Sequential(*layers).to(self._device)
+
+    def _resolve_device(self):
+        """Resolve the torch device (cuda -> mps -> cpu), honouring ``device``."""
+        import torch
+
+        if self.device is not None:
+            return torch.device(self.device)
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
+        return torch.device("cpu")
+
+    def _to_tensor(self, a: np.ndarray):
+        """Convert a numpy array to a float32 tensor on the resolved device."""
+        import torch
+
+        return torch.from_numpy(np.ascontiguousarray(a, dtype=np.float32)).to(
+            self._device
+        )
+
+    def _prepared_input(self, z1: np.ndarray):
+        """Standardise ``z1`` and return it as a device tensor."""
+        if self._net is None:
+            raise RuntimeError(f"{type(self).__name__} used before fit.")
+        return self._to_tensor(
+            GaussianVAE._apply_norm(
+                np.asarray(z1, dtype=np.float64), self._in_mean, self._in_std
+            )
+        )
+
+
+class LatentMapMLP(_LatentMapBase):
+    """Stage 4 rung 2: deterministic GELU-MLP map ``z1 -> z2``.
+
+    Plain MSE regression (mean over all elements) on the standardised code
+    scales; :meth:`predict` inverts the target standardisation.
+    """
+
+    def _out_width(self, d_out: int) -> int:
+        return d_out
+
+    def _loss(self, raw, target):
+        return ((raw - target) ** 2).mean()
+
+    def predict(self, z1: np.ndarray) -> np.ndarray:
+        """Predict ``z2`` for codes ``z1`` (deterministic).
+
+        Args:
+            z1 (np.ndarray): Inputs, shape (n_examples, d1).
+
+        Returns:
+            np.ndarray: Predicted codes, shape (n_examples, d2).
+        """
+        import torch
+
+        x = self._prepared_input(z1)
+        self._net.eval()
+        with torch.no_grad():
+            out = self._net(x).cpu().numpy()
+        return GaussianVAE._invert_norm(out, self._out_mean, self._out_std)
+
+
+class LatentMapMDN(_LatentMapBase):
+    """Stage 4 rung 3: mixture density network for ``p(z2 | z1)``.
+
+    The trunk emits, per example, ``K`` mixture logits, ``K x d2`` component
+    means, and ``K x d2`` diagonal log-variances (clamped to [-8, 8]); the
+    loss is the exact mixture negative log-likelihood on the standardised
+    code scale (log-sum-exp over components; sums over target dimensions,
+    mean over the batch). :meth:`predict` returns the mixture mean;
+    :meth:`sample` draws components then Gaussians, seeded via a CPU
+    generator (MPS-safe, the cvae pattern).
+
+    Args:
+        n_components (int): Mixture size ``K``. Defaults to 3.
+        **kwargs: Trunk and training options, as :class:`_LatentMapBase`.
+    """
+
+    def __init__(self, n_components: int = 3, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self.n_components = n_components
+
+    def _out_width(self, d_out: int) -> int:
+        return self.n_components * (1 + 2 * d_out)
+
+    def _split(self, raw):
+        """Split trunk output into (logits, means, logvars) mixture blocks."""
+        import torch
+
+        k, d = self.n_components, self._d_out
+        logits = raw[:, :k]
+        means = raw[:, k:k + k * d].reshape(-1, k, d)
+        logvars = torch.clamp(
+            raw[:, k + k * d:].reshape(-1, k, d), -8.0, 8.0
+        )
+        return logits, means, logvars
+
+    def _loss(self, raw, target):
+        import torch
+
+        logits, means, logvars = self._split(raw)
+        log_w = torch.log_softmax(logits, dim=1)                # (N, K)
+        diff2 = (target.unsqueeze(1) - means) ** 2              # (N, K, d)
+        comp_ll = -0.5 * (diff2 / logvars.exp() + logvars + _LOG_2PI).sum(dim=2)
+        return -torch.logsumexp(log_w + comp_ll, dim=1).mean()
+
+    def _mixture(self, z1: np.ndarray):
+        """Evaluate the mixture parameters for ``z1`` (standardised scale)."""
+        import torch
+
+        x = self._prepared_input(z1)
+        self._net.eval()
+        with torch.no_grad():
+            logits, means, logvars = self._split(self._net(x))
+            weights = torch.softmax(logits, dim=1)
+        return weights, means, logvars
+
+    def predict(self, z1: np.ndarray) -> np.ndarray:
+        """Predict the mixture-mean ``z2`` for codes ``z1``.
+
+        Args:
+            z1 (np.ndarray): Inputs, shape (n_examples, d1).
+
+        Returns:
+            np.ndarray: Mixture means, shape (n_examples, d2).
+        """
+        weights, means, _ = self._mixture(z1)
+        mix_mean = (weights.unsqueeze(2) * means).sum(dim=1).cpu().numpy()
+        return GaussianVAE._invert_norm(mix_mean, self._out_mean, self._out_std)
+
+    def sample(
+        self, z1: np.ndarray, n_samples: int = 100, seed: int | None = None
+    ) -> np.ndarray:
+        """Draw ``z2 ~ p(z2 | z1)`` mixture samples.
+
+        Args:
+            z1 (np.ndarray): Inputs, shape (n_examples, d1).
+            n_samples (int): Draws per example. Defaults to 100.
+            seed (int | None): Sampling seed; None uses the model seed.
+
+        Returns:
+            np.ndarray: Samples, shape (n_samples, n_examples, d2).
+        """
+        import torch
+
+        weights, means, logvars = self._mixture(z1)
+        n, k, d = means.shape
+        seed = self.seed if seed is None else seed
+        gen = torch.Generator(device="cpu")
+        gen.manual_seed(int(seed))
+
+        # Component choice and Gaussian draws on CPU (seeded, MPS/CUDA-safe),
+        # then gathered against the (possibly device-resident) parameters.
+        comp = torch.multinomial(
+            weights.cpu(), n_samples, replacement=True, generator=gen
+        ).T                                                     # (S, N)
+        eps = torch.randn((n_samples, n, d), generator=gen)     # (S, N, d)
+        means_c, logvars_c = means.cpu(), logvars.cpu()
+        idx = comp.unsqueeze(2).expand(-1, -1, d)               # (S, N, d)
+        mu_sel = torch.gather(
+            means_c.unsqueeze(0).expand(n_samples, -1, -1, -1), 2,
+            idx.unsqueeze(2),
+        ).squeeze(2)
+        lv_sel = torch.gather(
+            logvars_c.unsqueeze(0).expand(n_samples, -1, -1, -1), 2,
+            idx.unsqueeze(2),
+        ).squeeze(2)
+        z = (mu_sel + torch.exp(0.5 * lv_sel) * eps).numpy()
+        return GaussianVAE._invert_norm(z, self._out_mean, self._out_std)
+
+
+def composite_predict(
+    vae_x, mapping, vae_y, X: np.ndarray, context: np.ndarray | None
+) -> np.ndarray:
+    """Dual-VAE composite point prediction ``x -> mu1 -> M(mu1) -> decoder-Y``.
+
+    Stage 4 task 5's point-prediction path (and the Stage 5 plugin's
+    ``predict``): encode the profile to the VAE-X posterior mean, map it with
+    the rung's ``predict`` (rungs 1-2: the deterministic map; rung 3: the MDN
+    mixture mean), and decode through decoder-Y.
+
+    Args:
+        vae_x: Fitted :class:`GaussianVAE` for f_gas(R) (its ``encode``).
+        mapping: A fitted rung exposing ``predict(z1) -> z2``.
+        vae_y: Fitted :class:`GaussianVAE` for SP(k) (its ``decode``).
+        X (np.ndarray): Profiles, shape (n_examples, n_radii).
+        context (np.ndarray | None): Conditioning context for both VAEs.
+
+    Returns:
+        np.ndarray: Predicted SP(k), shape (n_examples, n_k), raw scale.
+    """
+    mu1 = vae_x.encode(X, context)
+    return vae_y.decode(mapping.predict(mu1), context)
+
+
+def composite_samples(
+    vae_x,
+    mdn,
+    vae_y,
+    X: np.ndarray,
+    context: np.ndarray | None,
+    n_samples: int = 200,
+    seed: int = 0,
+) -> np.ndarray:
+    """Dual-VAE composite predictive samples (rung 3 only).
+
+    Per decision F0.5 the spread here is the **mapping density plus decoder-Y
+    observation noise** and deliberately EXCLUDES the encoder-X posterior
+    spread and any input measurement noise (input-noise propagation is a
+    later, separate addition): ``z2 ~ p(z2 | mu1)`` from the MDN, each draw
+    decoded through decoder-Y, plus per-bin Gaussian noise from
+    ``vae_y.obs_sigma()``.
+
+    Args:
+        vae_x: Fitted :class:`GaussianVAE` for f_gas(R).
+        mdn: Fitted :class:`LatentMapMDN` (its ``sample``).
+        vae_y: Fitted :class:`GaussianVAE` for SP(k).
+        X (np.ndarray): Profiles, shape (n_examples, n_radii).
+        context (np.ndarray | None): Conditioning context for both VAEs.
+        n_samples (int): Draws per example. Defaults to 200.
+        seed (int): Seed for both the MDN sampling and the observation noise.
+
+    Returns:
+        np.ndarray: Samples, shape (n_samples, n_examples, n_k), raw scale.
+    """
+    mu1 = vae_x.encode(X, context)
+    z2 = mdn.sample(mu1, n_samples=n_samples, seed=seed)   # (S, N, d2)
+    n_s, n_x, d2 = z2.shape
+    decoded = vae_y.decode(
+        z2.reshape(n_s * n_x, d2),
+        None if context is None else np.repeat(
+            np.asarray(context, dtype=float)[None, :, :], n_s, axis=0
+        ).reshape(n_s * n_x, -1),
+    ).reshape(n_s, n_x, -1)
+    rng = np.random.default_rng(seed)
+    noise = rng.normal(size=decoded.shape) * vae_y.obs_sigma()
+    return decoded + noise

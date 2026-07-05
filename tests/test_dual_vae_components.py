@@ -192,3 +192,69 @@ def test_obs_sigma_recovers_per_bin_noise():
     )
     assert (ratio > 0.5).all(), (fitted, true_sigma)
     assert int(np.argmax(fitted)) == int(np.argmax(true_sigma))
+
+
+# --- latent-map rungs (Stage 4) ------------------------------------------------
+
+def test_latent_map_mlp_recovers_nonlinear_map():
+    from fgas_spk.models.dual_vae_components import LatentMapMLP
+
+    rng = np.random.default_rng(0)
+    z1 = rng.normal(size=(600, 2))
+    z2_clean = np.tanh(z1 @ np.array([[1.5, -0.7], [0.3, 2.0]]))
+    z2 = z2_clean + rng.normal(size=z2_clean.shape) * 0.05
+    mlp = LatentMapMLP(epochs=250, seed=0, device="cpu")
+    mlp.fit(z1, z2)
+    pred = mlp.predict(z1)
+    assert pred.shape == z2.shape
+    assert float(np.sqrt(np.mean((pred - z2_clean) ** 2))) < 0.06
+    assert mlp.best_epoch is not None and len(mlp.history) == 250
+
+
+def test_latent_map_mdn_bimodal_and_seeded():
+    from fgas_spk.models.dual_vae_components import LatentMapMDN
+
+    rng = np.random.default_rng(1)
+    z1 = rng.normal(size=(600, 2))
+    sign = rng.choice([-1.0, 1.0], size=(600, 1))
+    z2 = np.hstack([z1[:, :1] * 0.5 + sign, -z1[:, 1:] * 0.3]) \
+        + rng.normal(size=(600, 2)) * 0.05
+    mdn = LatentMapMDN(n_components=3, epochs=300, seed=0, device="cpu")
+    mdn.fit(z1, z2)
+    s = mdn.sample(z1[:4], n_samples=2000, seed=1)
+    assert s.shape == (2000, 4, 2)
+    # Both branches of the bimodal conditional must be populated.
+    frac_hi = float((s[:, 0, 0] > z1[0, 0] * 0.5).mean())
+    assert 0.2 < frac_hi < 0.8
+    # Mixture-mean point prediction has the target shape.
+    assert mdn.predict(z1[:4]).shape == (4, 2)
+    # Sampling is reproducible under a fixed seed.
+    assert np.array_equal(mdn.sample(z1[:3], 10, seed=5),
+                          mdn.sample(z1[:3], 10, seed=5))
+
+
+def test_composite_helpers_shapes_and_f05_semantics():
+    from fgas_spk.models.dual_vae_components import (
+        GaussianVAE, LatentMapMDN, composite_predict, composite_samples,
+    )
+
+    rng = np.random.default_rng(2)
+    n, n_r, n_k, n_ctx = 200, 6, 5, 3
+    ctx = rng.normal(size=(n, n_ctx))
+    x = rng.normal(size=(n, n_r))
+    y = rng.normal(size=(n, n_k))
+    vx = _fast_vae(epochs=10)
+    vx.fit(x, ctx)
+    vy = _fast_vae(epochs=10)
+    vy.fit(y, ctx)
+    mdn = LatentMapMDN(n_components=2, epochs=30, seed=0, device="cpu")
+    mdn.fit(vx.encode(x, ctx), vy.encode(y, ctx))
+
+    point = composite_predict(vx, mdn, vy, x, ctx)
+    assert point.shape == (n, n_k)
+    s = composite_samples(vx, mdn, vy, x, ctx, n_samples=20, seed=0)
+    assert s.shape == (20, n, n_k)
+    # F0.5: the spread includes decoder-Y obs noise, so the across-sample std
+    # is at least on the order of obs_sigma for every bin.
+    spread = s.std(axis=0).mean(axis=0)
+    assert (spread > 0.3 * vy.obs_sigma()).all()
