@@ -256,7 +256,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=0,
                         help="Model seed (torch + internal holdout).")
     parser.add_argument("--epochs", type=int, default=None,
-                        help="Override MODEL_PARAMS['epochs'] (smoke tests).")
+                        help="Override MODEL_PARAMS['epochs'] (smoke tests / "
+                        "convergence checks).")
+    parser.add_argument("--hidden", type=int, default=None,
+                        help="Override MODEL_PARAMS['hidden'] (capacity checks).")
+    parser.add_argument("--n-layers", type=int, default=None,
+                        help="Override MODEL_PARAMS['n_layers'] (capacity checks).")
+    parser.add_argument("--lr", type=float, default=None,
+                        help="Override MODEL_PARAMS['lr'].")
     parser.add_argument("--experiments-root", default=None,
                         help="Override the run-record tree (smoke tests; "
                         "default: <repo>/experiments).")
@@ -282,8 +289,10 @@ def main(argv: list[str] | None = None) -> int:
     pca_rmse_at = dict(zip(pca_table["n_components"], pca_table["val_recon_rmse"]))
 
     model_params = dict(MODEL_PARAMS)
-    if args.epochs is not None:
-        model_params["epochs"] = args.epochs
+    for key in ("epochs", "hidden", "n_layers", "lr"):
+        value = getattr(args, key)
+        if value is not None:
+            model_params[key] = value
 
     # --- sweep -------------------------------------------------------------
     results: list[dict] = []
