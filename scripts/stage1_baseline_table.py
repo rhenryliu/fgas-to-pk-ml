@@ -55,6 +55,24 @@ SUPPRESSED_THRESHOLDS = (0.95, 0.9, 0.8)
 
 NOTE_PATH = "experiments/notes/dual_vae_baseline_table.md"
 
+# Amendment A2 (2026-07-05): the original table was produced on tag 20260617,
+# which the amendment superseded with 20260702. The old numbers are preserved
+# verbatim below (append-only provenance) and re-emitted by every regeneration;
+# no gate may compare against them (amendment A3: same-tag comparisons only).
+SUPERSEDED_APPENDIX = """
+## Superseded (tag 20260617) — do not compare against these
+
+Produced 2026-07-05 20:44Z on dataset tag `20260617` (17 radial bins), before
+amendment A1 repinned the context to tag `20260702` (20 radial bins, re-binned
+f_gas profiles; SP(k) content identical). Kept for provenance only.
+
+| model | run_id | val RMSE | val RMSE (SP<0.95) | val RMSE (SP<0.9) | val RMSE (SP<0.8) |
+|---|---|---|---|---|---|
+| `pca_linear` | `20260705T204410Z__86702b77__fe6a28c` | 0.057267 | 0.076948 (n=1240) | 0.098986 (n=671) | 0.16107 (n=234) |
+| `mlp_regressor` | `20260705T204419Z__939cfe69__fe6a28c` | 0.050471 | 0.083179 (n=1240) | 0.10746 (n=671) | 0.16809 (n=234) |
+| `mlp` | `20260705T204423Z__b90ff578__fe6a28c` | 0.061675 | 0.09848 (n=1240) | 0.12847 (n=671) | 0.20395 (n=234) |
+"""
+
 
 def val_metrics(
     model, td, val_mask: np.ndarray, thresholds=SUPPRESSED_THRESHOLDS
@@ -155,7 +173,7 @@ def _format_table(rows: list[dict], data_config, td) -> str:
             f"| `{row['model']}` | `{row['run_id']}` | {row['rmse']:.5g} | "
             + " | ".join(cells) + " |"
         )
-    return header + "\n".join(lines) + "\n"
+    return header + "\n".join(lines) + "\n" + SUPERSEDED_APPENDIX
 
 
 def main(argv: list[str] | None = None) -> int:

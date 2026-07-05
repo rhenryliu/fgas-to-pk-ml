@@ -53,6 +53,9 @@ PINNED_SPLIT = SplitSpec(train_frac=0.7, val_frac=0.1, test_frac=0.2, seed=100)
 # Component counts scanned for the dimensionality curves.
 N_COMPONENTS_GRID = tuple(range(1, 11))
 
+# Amendment B5: suppressed-regime truncation-error thresholds (TRUE SP(k) < t).
+SUPPRESSED_THRESHOLDS = (0.95, 0.9, 0.8)
+
 DEFAULT_DATA_CONFIG = "scripts/configs/data/config_dual_vae.yaml"
 
 
@@ -77,6 +80,7 @@ def pca_dimensionality_table(
     val_arr: np.ndarray,
     n_grid: tuple[int, ...],
     seed: int,
+    suppressed_thresholds: tuple[float, ...] | None = None,
 ) -> tuple[object, dict]:
     """Fit PCA on the train fold and tabulate per-``n`` val reconstruction error.
 
@@ -87,6 +91,12 @@ def pca_dimensionality_table(
             ``min(n_features, n_train)`` are dropped (and reported as such).
         seed (int): Passed to PCA's ``random_state`` (inert for the
             deterministic full SVD used here; recorded for completeness).
+        suppressed_thresholds (tuple[float, ...] | None): When given (the
+            SP(k) modality), also report the amendment-B5 suppressed-regime
+            truncation error: the val reconstruction RMSE restricted to the
+            entries where the TRUE value < t, for each threshold t
+            (ground-truth-masked, never prediction-masked). None skips it
+            (the f_gas modality, where the thresholds have no meaning).
 
     Returns:
         tuple[object, dict]: The fitted :class:`sklearn.decomposition.PCA`
@@ -94,7 +104,8 @@ def pca_dimensionality_table(
             ``n_components``, ``val_recon_rmse`` (raw scale),
             ``val_r2`` (1 - SSE/SST, SST about the train mean),
             ``train_explained_variance_ratio`` (per component) and its
-            cumulative sum.
+            cumulative sum; plus, with thresholds,
+            ``suppressed_recon_rmse[str(t)] = {"rmse": [per n], "n_bins": int}``.
     """
     from sklearn.decomposition import PCA
 
@@ -108,13 +119,25 @@ def pca_dimensionality_table(
     z_val = pca.transform(val_arr)                     # (n_val, n_max)
     sst = float(np.sum((val_arr - pca.mean_) ** 2))    # about the train mean
 
+    thresholds = tuple(suppressed_thresholds or ())
+    masks = {t: val_arr < t for t in thresholds}       # truth-masked (B5)
+
     val_rmse: list[float] = []
     val_r2: list[float] = []
+    suppressed: dict[str, dict] = {
+        str(t): {"rmse": [], "n_bins": int(masks[t].sum())} for t in thresholds
+    }
     for n in n_used:
         recon = pca.mean_ + z_val[:, :n] @ pca.components_[:n]
-        sse = float(np.sum((val_arr - recon) ** 2))
+        se = (val_arr - recon) ** 2
+        sse = float(se.sum())
         val_rmse.append(float(np.sqrt(sse / val_arr.size)))
         val_r2.append(1.0 - sse / sst)
+        for t in thresholds:
+            mask = masks[t]
+            suppressed[str(t)]["rmse"].append(
+                float(np.sqrt(np.mean(se[mask]))) if mask.any() else None
+            )
 
     table = {
         "n_components": n_used,
@@ -126,6 +149,8 @@ def pca_dimensionality_table(
         "train_explained_variance_ratio_cumulative":
             [float(v) for v in np.cumsum(pca.explained_variance_ratio_[:n_max])],
     }
+    if thresholds:
+        table["suppressed_recon_rmse"] = suppressed
     return pca, table
 
 
@@ -214,15 +239,18 @@ def main(argv: list[str] | None = None) -> int:
     if not masks["val"].any():
         raise RuntimeError("Pinned split produced an empty val fold; cannot score.")
 
+    # The B5 suppressed-regime truncation diagnostic applies to the SP(k)
+    # modality only (the thresholds are SP(k) values; meaningless for f_gas).
     modalities = {
-        "pca_x_recon": (td.X, "f_gas(R)"),
-        "pca_y_recon": (td.y, "SP(k)"),
+        "pca_x_recon": (td.X, "f_gas(R)", None),
+        "pca_y_recon": (td.y, "SP(k)", SUPPRESSED_THRESHOLDS),
     }
 
-    for model_label, (arr, desc) in modalities.items():
+    for model_label, (arr, desc, thresholds) in modalities.items():
         arr = np.asarray(arr, dtype=float)
         pca, table = pca_dimensionality_table(
-            arr[masks["train"]], arr[masks["val"]], N_COMPONENTS_GRID, args.seed
+            arr[masks["train"]], arr[masks["val"]], N_COMPONENTS_GRID, args.seed,
+            suppressed_thresholds=thresholds,
         )
 
         run_config = RunConfig(

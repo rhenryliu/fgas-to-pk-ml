@@ -17,7 +17,7 @@ snapshot: 74          # z = 0.47 (single-snapshot training only; decision F0.7)
 redshift: 0.47
 source: lindajin
 rank: m500            # on-disk rank token (m500 / mstar / frozen)
-tag: '20260617'       # pinned tag (the config_camels.yaml tag at spec time)
+tag: '20260702'       # pinned tag (amendment A1, 2026-07-05; was 20260617)
 
 # --- Simulation subset (null = all, in stored order) ---
 sim_ids: null
