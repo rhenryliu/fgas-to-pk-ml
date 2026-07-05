@@ -178,8 +178,8 @@ def _write_trace_figure(model: GaussianVAE, label: str) -> Path | None:
     ax_kl.legend()
     ax_kl.set_title(f"{label}\nlatent traces (train fold)")
     ax_act.set_yscale("log")
-    ax_act.axhspan(ACTIVITY_LO, ACTIVITY_HI, color="C2", alpha=0.15,
-                   label="gate band [1, 10]")
+    # A_j is documented, not gated (amendment B3); mark A = 1 for orientation.
+    ax_act.axhline(1.0, color="C2", linewidth=1, linestyle=":", label="A = 1")
     ax_act.set_xlabel("epoch")
     ax_act.set_ylabel(r"activity $A_j$")
     ax_act.legend()
