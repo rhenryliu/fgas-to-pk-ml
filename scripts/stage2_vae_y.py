@@ -3,7 +3,12 @@
 Trains the reusable :class:`~fgas_spk.models.dual_vae_components.GaussianVAE`
 on the **train-fold** SP(k) curves with the five cosmological CAMELS parameters
 as context (decision F0.4), sweeping ``latent_dim_y`` over {2, 3, 4} (decision
-F0.3), and evaluates each on the val fold. This doubles as the methodological
+F0.3) crossed with ``beta`` over {1, 0.1, 0.01, 0.001} (F0.2 as amended
+2026-07-05, B1), and evaluates each on the val fold with posterior-mean
+decoding (B4), including the B5 suppressed-regime truncation error. Gates are
+the amended G2.1' (codec adequacy vs 10% of the best Stage 1 cross-modal val
+RMSE) and G2.2' (collapse detection only); the VAE-vs-PCA comparison at
+matched dimension is reported as a finding (B2). This doubles as the methodological
 replication of Lin et al. (2026, arXiv:2509.01881) on this project's own data
 (decision F0.1 = (b)); the checks below are their Figs. 12 / 5 / 1 analogues.
 
@@ -69,24 +74,40 @@ STAGE1_PCA_Y_RUN_ID = "20260705T204300Z__0234cc3a__fe6a28c"
 # The swept latent dimensionalities (decision F0.3).
 LATENT_DIMS = (2, 3, 4)
 
-# Shared VAE-Y hyperparameters; latent_dim is added per sweep point. These are
-# the Stage 2 selections that Stage 5's dual_vae plugin will inherit.
+# The swept terminal KL weights (F0.2 as amended 2026-07-05, B1: beta is a
+# tuned hyperparameter, not fixed at 1).
+BETAS = (1.0, 0.1, 0.01, 0.001)
+
+# Shared VAE-Y hyperparameters; latent_dim and beta are added per sweep point.
+# These are the Stage 2 selections that Stage 5's dual_vae plugin will inherit.
+# epochs=5000 is the converged schedule established on the 20260617 rounds
+# (best_epoch ~2000-2300 with best-epoch restore guarding overfit).
 MODEL_PARAMS = {
     "hidden": 128,
     "n_layers": 2,
-    "epochs": 1000,
+    "epochs": 5000,
     "lr": 1.0e-3,
     "weight_decay": 1.0e-4,
     "dropout": 0.0,
     "batch_size": 128,
-    "beta": 1.0,          # principled with the learned noise head (F0.2)
     "anneal_epochs": None,  # -> epochs // 4, linear KL warm-up
     "val_frac": 0.1,      # internal holdout for best-epoch restore
 }
 
-# Activity criterion (gate G2.2): every retained dimension must satisfy this
-# at the end of training (train fold).
-ACTIVITY_LO, ACTIVITY_HI = 1.0, 10.0
+# Gate G2.2' (amendment B3): collapse detection only. A dimension is collapsed
+# when its per-dim KL (train fold, best-epoch weights) falls below this.
+COLLAPSE_KL_MIN = 0.01
+
+# Gate G2.1' (amendment B2): codec adequacy. The selected VAE-Y val recon RMSE
+# must be <= G21_FRACTION x the best Stage 1 cross-modal val RMSE on the
+# current pinned context (tag 20260702): mlp, val RMSE 0.042921, run
+# 20260705T221753Z__e18a8464__760d8d6. Override via --g21-reference if Stage 1
+# is re-run.
+BEST_BASELINE_VAL_RMSE = 0.042921
+G21_FRACTION = 0.10
+
+# Amendment B5: suppressed-regime truncation thresholds (TRUE SP(k) < t).
+SUPPRESSED_THRESHOLDS = (0.95, 0.9, 0.8)
 
 REDUCTION_CONVENTION = (
     "ELBO reduction (GR7): Gaussian NLL summed over k bins and KL summed over "
@@ -102,9 +123,34 @@ def _rmse(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.sqrt(np.mean((np.asarray(a) - np.asarray(b)) ** 2)))
 
 
-def _activity_ok(activity: list[float]) -> bool:
-    """True when every dimension's A_j lies in [ACTIVITY_LO, ACTIVITY_HI]."""
-    return all(ACTIVITY_LO <= a <= ACTIVITY_HI for a in activity)
+def _collapse_ok(kl_per_dim: list[float]) -> bool:
+    """True when no dimension is collapsed (per-dim KL >= 0.01 nats; B3)."""
+    return all(k >= COLLAPSE_KL_MIN for k in kl_per_dim)
+
+
+def _suppressed_recon_rmse(
+    y_true: np.ndarray, y_recon: np.ndarray, thresholds=SUPPRESSED_THRESHOLDS
+) -> dict:
+    """Truth-masked reconstruction RMSE where TRUE SP(k) < t (amendment B5).
+
+    Args:
+        y_true (np.ndarray): True SP(k), shape (n_examples, n_k).
+        y_recon (np.ndarray): Reconstruction, same shape.
+        thresholds (Iterable[float]): The SP(k) thresholds ``t``.
+
+    Returns:
+        dict: ``{str(t): {"rmse": float | None, "n_bins": int}}``.
+    """
+    se = (np.asarray(y_recon) - np.asarray(y_true)) ** 2
+    out: dict = {}
+    for t in thresholds:
+        mask = np.asarray(y_true) < t
+        n_bins = int(mask.sum())
+        out[str(t)] = {
+            "rmse": float(np.sqrt(np.mean(se[mask]))) if n_bins else None,
+            "n_bins": n_bins,
+        }
+    return out
 
 
 def _write_trace_figure(model: GaussianVAE, label: str) -> Path | None:
@@ -162,9 +208,13 @@ def _write_rmse_vs_dim_figure(
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.plot(pca_table["n_components"], pca_table["val_recon_rmse"],
             marker=".", color="C0", label="PCA on Y (Stage 1)")
-    ax.plot([r["latent_dim"] for r in results],
-            [r["val_recon_rmse"] for r in results],
-            marker="o", linestyle="none", color="C3", label="VAE-Y")
+    betas = sorted({r["beta"] for r in results}, reverse=True)
+    for i, beta in enumerate(betas):
+        pts = [r for r in results if r["beta"] == beta]
+        ax.plot([p["latent_dim"] for p in pts],
+                [p["val_recon_rmse"] for p in pts],
+                marker="o", linestyle="none", color=f"C{i + 1}",
+                label=f"VAE-Y (beta={beta})")
     ax.set_yscale("log")
     ax.set_xlabel("latent dimension / n components")
     ax.set_ylabel("val reconstruction RMSE of SP(k)")
@@ -267,6 +317,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--experiments-root", default=None,
                         help="Override the run-record tree (smoke tests; "
                         "default: <repo>/experiments).")
+    parser.add_argument("--g21-reference", type=float,
+                        default=BEST_BASELINE_VAL_RMSE,
+                        help="Best Stage 1 cross-modal val RMSE on the pinned "
+                        "context; the G2.1' bar is G21_FRACTION x this.")
     parser.add_argument("--no-figures", action="store_true",
                         help="Skip writing figures.")
     args = parser.parse_args(argv)
@@ -294,42 +348,52 @@ def main(argv: list[str] | None = None) -> int:
         if value is not None:
             model_params[key] = value
 
-    # --- sweep -------------------------------------------------------------
+    # --- sweep: latent_dim x beta (F0.2 as amended, B1) ---------------------
     results: list[dict] = []
     for ld in LATENT_DIMS:
-        model = GaussianVAE(latent_dim=ld, seed=args.seed, **model_params)
-        model.fit(y_tr, c_tr)
-        stats_tr = model.latent_stats(y_tr, c_tr)
-        stats_va = model.latent_stats(y_va, c_va)
-        res = {
-            "latent_dim": ld,
-            "model": model,
-            "train_recon_rmse": _rmse(model.reconstruct(y_tr, c_tr), y_tr),
-            "val_recon_rmse": _rmse(model.reconstruct(y_va, c_va), y_va),
-            "pca_val_rmse_matched": pca_rmse_at[ld],
-            "kl_per_dim_train": stats_tr["kl_per_dim"],
-            "activity_train": stats_tr["activity"],
-            "kl_per_dim_val": stats_va["kl_per_dim"],
-            "activity_val": stats_va["activity"],
-            "activity_ok": _activity_ok(stats_tr["activity"]),
-            "obs_sigma": [float(s) for s in model.obs_sigma()],
-            "best_epoch": model.best_epoch,
-        }
-        results.append(res)
-        print(f"[vae_spk ld={ld}] val recon RMSE {res['val_recon_rmse']:.5g} "
-              f"(PCA {res['pca_val_rmse_matched']:.5g}) "
-              f"A_j(train)={np.round(res['activity_train'], 2).tolist()} "
-              f"KL={np.round(res['kl_per_dim_train'], 3).tolist()} "
-              f"best_epoch={res['best_epoch']}")
+        for beta in BETAS:
+            model = GaussianVAE(
+                latent_dim=ld, beta=beta, seed=args.seed, **model_params
+            )
+            model.fit(y_tr, c_tr)
+            stats_tr = model.latent_stats(y_tr, c_tr)
+            stats_va = model.latent_stats(y_va, c_va)
+            y_va_recon = model.reconstruct(y_va, c_va)
+            res = {
+                "latent_dim": ld,
+                "beta": beta,
+                "model": model,
+                "train_recon_rmse": _rmse(model.reconstruct(y_tr, c_tr), y_tr),
+                # Posterior-mean decode throughout (amendment B4).
+                "val_recon_rmse": _rmse(y_va_recon, y_va),
+                "suppressed_recon_rmse": _suppressed_recon_rmse(y_va, y_va_recon),
+                "pca_val_rmse_matched": pca_rmse_at[ld],
+                "kl_per_dim_train": stats_tr["kl_per_dim"],
+                "activity_train": stats_tr["activity"],
+                "kl_per_dim_val": stats_va["kl_per_dim"],
+                "activity_val": stats_va["activity"],
+                "collapse_ok": _collapse_ok(stats_tr["kl_per_dim"]),
+                "obs_sigma": [float(s) for s in model.obs_sigma()],
+                "best_epoch": model.best_epoch,
+            }
+            results.append(res)
+            print(f"[vae_spk ld={ld} beta={beta}] "
+                  f"val recon RMSE {res['val_recon_rmse']:.5g} "
+                  f"(PCA {res['pca_val_rmse_matched']:.5g}) "
+                  f"KL={np.round(res['kl_per_dim_train'], 3).tolist()} "
+                  f"A_j={np.round(res['activity_train'], 1).tolist()} "
+                  f"collapse_ok={res['collapse_ok']} "
+                  f"best_epoch={res['best_epoch']}")
 
-    # --- selection (task 4): lowest val recon RMSE subject to the activity
-    # criterion; fall back to lowest RMSE (gate G2.2 then fails, reported).
-    eligible = [r for r in results if r["activity_ok"]]
+    # --- selection (task 4 as amended, B1): lowest val recon RMSE
+    # (posterior-mean decode) subject to the no-collapse criterion (B3);
+    # fall back to lowest RMSE (gate G2.2' then fails, reported).
+    eligible = [r for r in results if r["collapse_ok"]]
     pool = eligible if eligible else results
     selected = min(pool, key=lambda r: r["val_recon_rmse"])
-    print(f"selected latent_dim_y = {selected['latent_dim']} "
-          f"(activity_ok={selected['activity_ok']}, "
-          f"eligible dims: {[r['latent_dim'] for r in eligible]})")
+    print(f"selected latent_dim_y = {selected['latent_dim']}, "
+          f"beta = {selected['beta']} (collapse_ok={selected['collapse_ok']}, "
+          f"eligible: {[(r['latent_dim'], r['beta']) for r in eligible]})")
 
     # --- Lin check (iii): mu2 vs ALL 35 SB35 parameters (val fold). The model
     # stays conditioned on the 5 cosmological params; only this analysis loads
@@ -349,7 +413,8 @@ def main(argv: list[str] | None = None) -> int:
         is_selected = res is selected
         run_config = RunConfig(
             model="vae_spk",  # record-only label, not a registry entry
-            model_params={"latent_dim": res["latent_dim"], **model_params},
+            model_params={"latent_dim": res["latent_dim"],
+                          "beta": res["beta"], **model_params},
             seed=args.seed,
             split=PINNED_SPLIT,
         )
@@ -357,20 +422,25 @@ def main(argv: list[str] | None = None) -> int:
             "stage": "dual_vae_stage2",
             "component": "vae_y",
             "latent_dim": res["latent_dim"],
+            "beta": res["beta"],
             "selected": is_selected,
             "n_train": int(masks["train"].sum()),
             "n_val": int(masks["val"].sum()),
+            "decode_convention": "posterior-mean decode (amendment B4)",
             "val_recon_rmse": res["val_recon_rmse"],
             "train_recon_rmse": res["train_recon_rmse"],
+            "suppressed_recon_rmse": res["suppressed_recon_rmse"],
             "pca_val_rmse_matched_dim": res["pca_val_rmse_matched"],
             "stage1_pca_y_run_id": STAGE1_PCA_Y_RUN_ID,
             "kl_per_dim_train": res["kl_per_dim_train"],
             "activity_train": res["activity_train"],
             "kl_per_dim_val": res["kl_per_dim_val"],
             "activity_val": res["activity_val"],
-            "activity_criterion": f"[{ACTIVITY_LO}, {ACTIVITY_HI}] on every "
-                                  "dimension (train fold)",
-            "activity_ok": res["activity_ok"],
+            "collapse_criterion": f"per-dim KL >= {COLLAPSE_KL_MIN} nats at "
+                                  "best epoch, train fold (G2.2', B3)",
+            "collapse_ok": res["collapse_ok"],
+            # A_j documented, not gated (B3): delta-like posteriors are
+            # permitted and expected in this near-deterministic regime.
             "obs_sigma_raw_scale": res["obs_sigma"],
             "best_epoch": res["best_epoch"],
             "reduction_convention": REDUCTION_CONVENTION,
@@ -378,12 +448,14 @@ def main(argv: list[str] | None = None) -> int:
         if is_selected:
             summary["lin_replication"] = {
                 "rmse_vs_pca": {
-                    "vae_val_rmse": {str(r["latent_dim"]): r["val_recon_rmse"]
-                                     for r in results},
+                    "vae_val_rmse": {
+                        f"ld{r['latent_dim']}_beta{r['beta']}": r["val_recon_rmse"]
+                        for r in results
+                    },
                     "pca_val_rmse": {str(n): v for n, v in pca_rmse_at.items()},
                 },
                 "dimensionality_sweep": {
-                    str(r["latent_dim"]): {
+                    f"ld{r['latent_dim']}_beta{r['beta']}": {
                         "kl_per_dim_train": r["kl_per_dim_train"],
                         "activity_train": r["activity_train"],
                     }
@@ -398,10 +470,11 @@ def main(argv: list[str] | None = None) -> int:
         ledger_metrics = {
             "stage": "dual_vae_stage2",
             "latent_dim": res["latent_dim"],
+            "beta": res["beta"],
             "selected": is_selected,
             "val_recon_rmse": res["val_recon_rmse"],
             "pca_val_rmse_matched_dim": res["pca_val_rmse_matched"],
-            "activity_ok": res["activity_ok"],
+            "collapse_ok": res["collapse_ok"],
         }
         record = write_run_record(
             data_config,
@@ -421,7 +494,10 @@ def main(argv: list[str] | None = None) -> int:
         ckpt_dir.mkdir(parents=True, exist_ok=True)
         joblib.dump(res["model"], ckpt_dir / "model.joblib")
 
-        label = _figure_label(record.run_id, f"vae_spk_ld{res['latent_dim']}")
+        label = _figure_label(
+            record.run_id,
+            f"vae_spk_ld{res['latent_dim']}_b{res['beta']}",
+        )
         if not args.no_figures:
             _write_trace_figure(res["model"], label)
             if is_selected:
@@ -429,15 +505,22 @@ def main(argv: list[str] | None = None) -> int:
                 _write_correlation_figure(
                     corr, list(td_full.param_names), label
                 )
-        print(f"[vae_spk ld={res['latent_dim']}] run_id: {record.run_id}"
+        print(f"[vae_spk ld={res['latent_dim']} beta={res['beta']}] "
+              f"run_id: {record.run_id}"
               + ("  [SELECTED]" if is_selected else ""))
 
-    # --- gate G2.1 headline ---------------------------------------------------
-    g21 = selected["val_recon_rmse"] <= selected["pca_val_rmse_matched"]
+    # --- gate headline (amended B2/B3) --------------------------------------
+    g21_bar = G21_FRACTION * args.g21_reference
     print(json.dumps({
-        "G2.1_vae_le_pca_at_matched_dim": bool(g21),
-        "G2.2_activity_ok_selected": bool(selected["activity_ok"]),
+        "G2.1prime_codec_adequacy": bool(selected["val_recon_rmse"] <= g21_bar),
+        "G2.1prime_bar": g21_bar,
+        "G2.2prime_no_collapse": bool(selected["collapse_ok"]),
+        "finding_vae_vs_pca_matched_dim": {
+            "vae": selected["val_recon_rmse"],
+            "pca": selected["pca_val_rmse_matched"],
+        },
         "selected_latent_dim": selected["latent_dim"],
+        "selected_beta": selected["beta"],
         "selected_run_id": selected["run_id"],
     }, indent=2))
     return 0
