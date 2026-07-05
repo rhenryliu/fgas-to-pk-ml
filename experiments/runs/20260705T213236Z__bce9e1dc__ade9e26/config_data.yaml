@@ -1,0 +1,27 @@
+path: null
+project_root: /pscratch/sd/r/rhliu/projects/fgas-to-pk-ml/
+suite: CAMELS-IllustrisTNG-L50n512-SB35
+snapshot: 74
+redshift: 0.47
+source: lindajin
+rank: m500
+tag: '20260617'
+sim_ids: null
+number_density_indices:
+- 2
+radial_range_mpch: null
+include_nd_feature: false
+include_mean_halo_mass: false
+include_camels_params: true
+camels_param_indices: null
+camels_param_names:
+- Omega0
+- sigma8
+- OmegaBaryon
+- HubbleParam
+- n_s
+target_mode: k_range
+k_target: null
+k_range:
+- 0.5
+- 5.0
