@@ -1,4 +1,105 @@
-# Dual-VAE Stage 2 gate report — GATE FAILED, STOPPED
+# Dual-VAE Stage 2 gate report — tag 20260702, amended gates: PASS
+
+Re-run under the 2026-07-05 spec amendment (`docs/dual_vae_staged_spec.md`):
+tag `20260702`, beta swept per B1, gates G2.1'/G2.2' per B2/B3, posterior-mean
+decoding per B4 (which the superseded 20260617 runs below also used — their
+`reconstruct()` decoded the posterior mean, so B4 is a confirmation, not a
+correction), B5 truncation diagnostic in every summary. Implementation commits
+`e863c23` (sweep + amended gates) and `fbd692e` (trace-figure fix) preceded
+the recorded runs. The original 20260617 report is kept below, superseded.
+
+**Run-integrity note.** The first full 12-run invocation (implementation
+`e863c23`, HEAD at launch `fbd692e`... run at 22:26-22:51 UTC) completed all
+12 fits but crashed in the trace-figure code (stale reference to the removed
+activity band) after writing only the first record
+(`20260705T225134Z__d81e73e0__fbd692e`, ld=2 beta=1.0, now redundant). The fix
+was committed and the sweep re-run in full; the 12 records below are the
+authoritative set.
+
+## Sweep (12 runs, 5000 epochs, hidden 128 x 2, seed 0, val fold, raw scale)
+
+| ld | beta | val recon RMSE | PCA @ dim | per-dim KL (train) | collapse_ok | run_id (20260705T...__e863c23) |
+|---|---|---|---|---|---|---|
+| 2 | 1.0 | 0.00475 | 0.00287 | 3.99, 1.73 | yes | `232027Z__d81e73e0` |
+| 2 | 0.1 | 0.00385 | 0.00287 | 5.37, 3.47 | yes | `232028Z__406776c8` |
+| 2 | 0.01 | 0.00408 | 0.00287 | 7.54, 5.12 | yes | `232029Z__3daae21e` |
+| 2 | 0.001 | 0.00346 | 0.00287 | 11.37, 6.45 | yes | `232030Z__d6ac6880` |
+| 3 | 1.0 | 0.00451 | 0.00134 | 4.00, 0.008, 1.58 | **no** | `232030Z__efd14e87` |
+| 3 | 0.1 | 0.00317 | 0.00134 | 6.16, 2.37, 3.82 | yes | `232031Z__0a6c739a` |
+| 3 | 0.01 | 0.00203 | 0.00134 | 10.30, 3.89, 4.63 | yes | `232032Z__9dc14b78` |
+| 3 | 0.001 | 0.00200 | 0.00134 | 13.33, 4.41, 5.37 | yes | `232033Z__c9198e95` |
+| 4 | 1.0 | 0.00460 | 0.00100 | 0.014, 0.012, 3.97, 1.76 | **no**\* | `232033Z__417bb958` |
+| 4 | 0.1 | 0.00248 | 0.00100 | 2.93, 0.46, 6.62, 4.10 | yes | `232034Z__f744bbed` |
+| 4 | 0.01 | 0.00240 | 0.00100 | 3.83, 2.91, 9.47, 4.82 | yes | `232035Z__2ba53ce0` |
+| 4 | **0.001** | **0.00197** | 0.00100 | 4.68, 4.06, 13.07, 6.95 | yes | `232035Z__592313b6` **(selected)** |
+
+\* ld=4 beta=1.0 prints `collapse_ok=True` in its record because 0.014/0.012
+just clear the 0.01-nat bar; treated as effectively collapsed here for the
+dimensionality discussion (the two dims carry ~0.01 nats each).
+
+## Gate verdicts (amended)
+
+**G2.1' — codec adequacy: PASS.** Selected (ld=4, beta=0.001) val
+reconstruction RMSE 0.001969 <= bar 0.0042921 (10% of the best Stage 1
+cross-modal val RMSE, `mlp` 0.042921, run `20260705T221753Z__e18a8464__760d8d6`;
+same tag, per A3). The codec contributes at most ~1/20 of the best current
+end-to-end error in quadrature terms.
+
+**G2.2' — no collapse: PASS.** Selected run per-dim KL (train fold, best
+epoch): 4.68 / 4.06 / 13.07 / 6.95 nats, all >= 0.01. A_j (documented, not
+gated, per B3): 5394 / 2381 / 55677 / 11831 — delta-like posteriors, as
+expected at beta = 0.001 on a near-deterministic target.
+
+**B5 — suppressed-regime truncation error (selected run, val).**
+Global 0.00197; SP<0.95: 0.00307 (1240 bins); SP<0.9: 0.00379 (671);
+SP<0.8: 0.00462 (234). The codec truncation error is 1.6-2.3x worse in the
+deeply-suppressed bins than globally — heterogeneous exactly as B5
+anticipated; same pattern as PCA-on-Y (0.0014/0.0015/0.0021 at n=4).
+
+**G2.3 — Lin-replication verdicts (re-issued on tag 20260702):**
+
+1. *Reconstruction vs PCA at matched dimension (Fig. 12 analogue) +
+   beta-sweep behaviour:* **disagree** (finding, not gated, per B2). PCA wins
+   at every matched dimension at every beta (best VAE 0.00197 vs PCA 0.00100
+   at dim 4). The beta sweep confirms the maintainer's rate-distortion
+   reading: recon improves monotonically as beta falls (at ld=4:
+   0.00460 -> 0.00248 -> 0.00240 -> 0.00197 for beta 1 -> 0.001), closing the
+   PCA gap from 4.6x to 2.0x without reaching it. The remaining gap at
+   beta=0.001 is no longer a rate penalty; it is the decode-from-sampled-z
+   training blur plus finite optimization.
+2. *Dimensionality behaviour (Fig. 5 analogue):* **partially agree.** The
+   collapse pattern is beta-dependent: at beta = 1 the extra dimensions
+   collapse outright (the 20260617 finding reproduces on this tag); at the
+   selected beta = 0.001 all four dimensions carry active KL, but the recon
+   gain saturates (2 dims 0.00346 -> 3 dims 0.00200 -> 4 dims 0.00197):
+   a genuinely useful 3rd dimension, a marginal 4th. Effective
+   dimensionality of SP(k) given cosmology is ~3 at the operating beta.
+3. *Latent-parameter correlations over all 35 SB35 parameters (Fig. 1
+   analogue; val fold):* **partially agree.** Feedback parameters remain
+   prominent (mu2[1]: BlackHoleFeedbackFactor +0.22, ThermalWindFraction
+   -0.20; mu2[3]: VariableWindSpecMomentum +0.25, WindDumpFactor -0.24), but
+   at the selected low beta the latents also carry residual cosmology
+   (mu2[2]: Omega0 +0.43, OmegaBaryon -0.33) despite the 5-parameter
+   conditioning — the higher-rate code absorbs cosmological dependence the
+   context did not fully explain. All correlations are modest (|r| <= 0.43),
+   consistent with information spread across dimensions rather than one
+   parameter per latent.
+
+One outright disagreement (< 2): no human-review halt from G2.3.
+
+**G2.4 — reduction-convention audit: PASS** (GR7 string in all 12 summaries;
+metrics.jsonl traces consistent).
+
+## Selection carried into Stages 3-5
+
+`latent_dim_y = 4`, `beta_y = 0.001`, hidden 128, n_layers 2, epochs 5000,
+lr 1e-3, weight_decay 1e-4, batch 128, anneal_epochs -> epochs // 4,
+internal val_frac 0.1, seed 0. Frozen VAE-Y checkpoint:
+`<scratch>/models/20260705T232035Z__592313b6__e863c23/model.joblib`.
+
+---
+
+# [SUPERSEDED — tag 20260617, pre-amendment gates] Stage 2 gate report — GATE FAILED, STOPPED
 
 Staged spec v2, Stage 2 (VAE-Y on SP(k); Lin et al. 2026, arXiv:2509.01881,
 methodological replication). Implementation committed at `df58268` (component +
