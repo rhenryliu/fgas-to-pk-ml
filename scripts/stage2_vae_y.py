@@ -69,7 +69,7 @@ from stage1_pca_dimensionality import (
 DEFAULT_DATA_CONFIG = "scripts/configs/data/config_dual_vae.yaml"
 
 # Stage 1 canonical PCA-on-Y run (the numbers recomputed here must match it).
-STAGE1_PCA_Y_RUN_ID = "20260705T204300Z__0234cc3a__fe6a28c"
+STAGE1_PCA_Y_RUN_ID = "20260706T061040Z__85a299a1__3e94bcc"
 
 # The swept latent dimensionalities (decision F0.3).
 LATENT_DIMS = (2, 3, 4)
@@ -100,10 +100,10 @@ COLLAPSE_KL_MIN = 0.01
 
 # Gate G2.1' (amendment B2): codec adequacy. The selected VAE-Y val recon RMSE
 # must be <= G21_FRACTION x the best Stage 1 cross-modal val RMSE on the
-# current pinned context (tag 20260702): mlp, val RMSE 0.042921, run
-# 20260705T221753Z__e18a8464__760d8d6. Override via --g21-reference if Stage 1
-# is re-run.
-BEST_BASELINE_VAL_RMSE = 0.042921
+# current pinned context (tag 20260706, Branch-A clean data): mlp, val RMSE
+# 0.017012, run 20260706T061104Z__8fc38d33__3e94bcc. Override via
+# --g21-reference if Stage 1 is re-run.
+BEST_BASELINE_VAL_RMSE = 0.017012
 G21_FRACTION = 0.10
 
 # Amendment B5: suppressed-regime truncation thresholds (TRUE SP(k) < t).

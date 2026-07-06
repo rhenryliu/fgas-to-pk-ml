@@ -79,16 +79,17 @@ from stage2_vae_y import (
 )
 
 # Stage 1 canonical PCA-on-X run on the pinned tag (finding reference).
-STAGE1_PCA_X_RUN_ID = "20260705T221711Z__b05fb53d__760d8d6"
+STAGE1_PCA_X_RUN_ID = "20260706T061039Z__129449f5__3e94bcc"
 
 # G3.1' guardrail: VAE-X arm <= this factor x PCA-x-scores arm (B6).
 G31_GUARDRAIL = 1.05
 
 # Amendment 2, C1 (anti-vacuous-pass floor): the ratio test is valid only if
 # the PCA-x-scores arm's val y-space RMSE clears the Stage 1 `pca_linear`
-# baseline on the same tag and folds (run 20260705T221739Z__c9583454__760d8d6).
-# A mutual-failure ratio of ~1 must never pass again.
-G31_FLOOR_PCA_LINEAR_VAL_RMSE = 0.061429
+# baseline on the same tag and folds (tag 20260706, Branch-A clean data:
+# run 20260706T061051Z__1f810c16__3e94bcc). A mutual-failure ratio of ~1 must
+# never pass again.
+G31_FLOOR_PCA_LINEAR_VAL_RMSE = 0.038203
 
 
 def ood_reference_stats(mu: np.ndarray) -> dict:
