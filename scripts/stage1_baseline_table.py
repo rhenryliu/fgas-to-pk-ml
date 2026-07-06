@@ -60,7 +60,20 @@ NOTE_PATH = "experiments/notes/dual_vae_baseline_table.md"
 # verbatim below (append-only provenance) and re-emitted by every regeneration;
 # no gate may compare against them (amendment A3: same-tag comparisons only).
 SUPERSEDED_APPENDIX = """
-## Superseded (tag 20260617) — do not compare against these
+## Superseded (tag 20260702, superseded per-halo-ratio f_gas statistic) — do not compare against these
+
+Produced 2026-07-05 22:17Z on tag `20260702`. Superseded by the Branch-A
+DEFINITION change (ratio-of-stacked-profiles, tag `20260706`): the X matrix
+of this tag carried the per-halo-ratio corruption diagnosed in
+`dual_vae_stage3_forensics.md`. Kept for provenance only.
+
+| model | run_id | val RMSE | val RMSE (SP<0.95) | val RMSE (SP<0.9) | val RMSE (SP<0.8) |
+|---|---|---|---|---|---|
+| `pca_linear` | `20260705T221739Z__c9583454__760d8d6` | 0.061429 | 0.086437 (n=1240) | 0.10619 (n=671) | 0.16568 (n=234) |
+| `mlp_regressor` | `20260705T221749Z__5e0c03f0__760d8d6` | 0.050388 | 0.07638 (n=1240) | 0.096441 (n=671) | 0.14279 (n=234) |
+| `mlp` | `20260705T221753Z__e18a8464__760d8d6` | 0.042921 | 0.064242 (n=1240) | 0.078452 (n=671) | 0.10965 (n=234) |
+
+## Superseded (tag 20260617, superseded f_gas statistic) — do not compare against these
 
 Produced 2026-07-05 20:44Z on dataset tag `20260617` (17 radial bins), before
 amendment A1 repinned the context to tag `20260702` (20 radial bins, re-binned
@@ -112,7 +125,51 @@ def val_metrics(
             "rmse": float(np.sqrt(np.mean(se[mask]))) if n_bins else None,
             "n_bins": n_bins,
         }
-    return {"rmse": float(np.sqrt(np.mean(se))), "suppressed": suppressed}
+    return {
+        "rmse": float(np.sqrt(np.mean(se))),
+        "suppressed": suppressed,
+        # E4.2: the predicted-value range diagnoses range-collapse (a linear
+        # model predicting a narrow band) vs diagonal-tracking behaviour.
+        "pred_range": [float(y_pred.min()), float(y_pred.max())],
+        "true_range": [float(y_true.min()), float(y_true.max())],
+        "_y_true": y_true,
+        "_y_pred": y_pred,
+    }
+
+
+def _write_scatter_figure(rows: list[dict], label: str):
+    """E4.2: side-by-side val-fold predicted-vs-true scatters for all models.
+
+    matplotlib is imported lazily (Agg backend); returns None if unavailable.
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:  # pragma: no cover - matplotlib is in the env
+        return None
+
+    from fgas_spk.paths import figure_dir
+
+    fig, axes = plt.subplots(1, len(rows), figsize=(4.2 * len(rows), 4.2),
+                             sharex=True, sharey=True)
+    for ax, row in zip(np.atleast_1d(axes), rows):
+        yt, yp = row["_y_true"].ravel(), row["_y_pred"].ravel()
+        ax.scatter(yt, yp, s=5, alpha=0.3)
+        lo = min(yt.min(), yp.min())
+        hi = max(yt.max(), yp.max())
+        ax.plot([lo, hi], [lo, hi], "k--", linewidth=1)
+        ax.set_title(f"{row['model']}\nval RMSE {row['rmse']:.4g}, "
+                     f"pred range [{row['pred_range'][0]:.3f}, "
+                     f"{row['pred_range'][1]:.3f}]", fontsize=9)
+        ax.set_xlabel("true SP(k)")
+    np.atleast_1d(axes)[0].set_ylabel("predicted SP(k)")
+    fig.suptitle(f"{label}\nE4.2 val-fold pred vs true (clean data)")
+    out = figure_dir() / f"{label}__e42_pred_vs_true_val.png"
+    fig.tight_layout()
+    fig.savefig(out)
+    plt.close(fig)
+    return out
 
 
 def _format_table(rows: list[dict], data_config, td) -> str:
@@ -173,7 +230,30 @@ def _format_table(rows: list[dict], data_config, td) -> str:
             f"| `{row['model']}` | `{row['run_id']}` | {row['rmse']:.5g} | "
             + " | ".join(cells) + " |"
         )
-    return header + "\n".join(lines) + "\n" + SUPERSEDED_APPENDIX
+
+    # E4.2: clean-data re-verification of the map-nonlinearity evidence
+    # (reported finding, no gate): predicted-value ranges expose the linear
+    # model's range-collapse (or lack of it) on the corrected X.
+    e42 = [
+        "",
+        "## E4.2 — map-nonlinearity re-verification (val fold, clean data; finding, no gate)",
+        "",
+        f"True SP(k) range on val: [{rows[0]['true_range'][0]:.4f}, "
+        f"{rows[0]['true_range'][1]:.4f}]. Scatters: "
+        "`*__e42_pred_vs_true_val.png` (figures tree, regenerable).",
+        "",
+        "| model | val RMSE | pred range | pred-range width / true width |",
+        "|---|---|---|---|",
+    ]
+    true_width = rows[0]["true_range"][1] - rows[0]["true_range"][0]
+    for row in rows:
+        width = row["pred_range"][1] - row["pred_range"][0]
+        e42.append(
+            f"| `{row['model']}` | {row['rmse']:.5g} | "
+            f"[{row['pred_range'][0]:.4f}, {row['pred_range'][1]:.4f}] | "
+            f"{width / true_width:.2f} |"
+        )
+    return header + "\n".join(lines) + "\n" + "\n".join(e42) + "\n" + SUPERSEDED_APPENDIX
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -234,6 +314,13 @@ def main(argv: list[str] | None = None) -> int:
                 f"runner's {runner_val:.8g}; split or checkpoint mismatch."
             )
         rows.append({"model": model_name, "run_id": result.run_id, **metrics})
+
+    fig_path = _write_scatter_figure(
+        rows, f"stage1_baselines__{data_config_used.tag}"
+    )
+    print(f"E4.2 scatter figure: {fig_path}")
+    for row in rows:  # arrays served their purpose; keep the note JSON-free
+        row.pop("_y_true"), row.pop("_y_pred")
 
     note_path = repo_root() / NOTE_PATH
     note_path.parent.mkdir(parents=True, exist_ok=True)

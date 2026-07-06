@@ -17,7 +17,8 @@ snapshot: 74          # z = 0.47 (single-snapshot training only; decision F0.7)
 redshift: 0.47
 source: lindajin
 rank: m500            # on-disk rank token (m500 / mstar / frozen)
-tag: '20260702'       # pinned tag (amendment A1, 2026-07-05; was 20260617)
+tag: '20260706'       # pinned tag (Branch A rebuild, corrected fgas statistic;
+                      # supersedes 20260702/20260617 by DEFINITION change)
 
 # --- Simulation subset (null = all, in stored order) ---
 sim_ids: null
