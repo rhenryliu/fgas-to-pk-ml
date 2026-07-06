@@ -1,4 +1,81 @@
-# Dual-VAE Stage 3 gate report — letter-pass, substantive FAIL: STOPPED
+# Dual-VAE Stage 3 gate report — tag 20260706, R < 10 crop: G3.1' FAIL (gate unreachable by construction), STOPPED
+
+Full grid per the spec's own widening rule ("sweep {2, 3, 4, 6} only if
+G3.1' fails at 2" — it did): 16 runs, latent_dim_x in {2, 3, 4, 6} x beta in
+{1, 0.1, 0.01, 0.001}, cropped clean data, frozen VAE-Y
+`20260706T190601Z__8a715039__8522dd4`. Implementation commit `8cbe5b2`
+(hardened gates C1/C2 live). Runs `20260706T200035Z...200047Z__*__8cbe5b2`
+(the earlier ld=2-only invocation `20260706T192023Z...192026Z` is the same
+configuration set, superseded by this self-contained grid).
+
+## The health story first: VAE-X is fixed
+
+Every configuration now trains honestly on the corrected, cropped data:
+interior best-epochs (301-569 of 5000), no collapsed dimensions at any
+(ld, beta), G3.4 sanity PASS, G3.3 OOD statistics present. X-recon RMSE
+tracks PCA at matched dimension within 2-28% (e.g. ld=2 beta=1: 0.0330 vs
+0.0324; ld=6 beta=1: 0.0251 vs 0.0195). The Stage 3.0 -> Branch A chain
+(corruption diagnosis -> statistic fix -> crop) fully resolved the original
+epoch-0 pathology.
+
+## Gate verdicts (selected: ld=6, beta=1.0, `20260706T200044Z__a43ec084__8cbe5b2`)
+
+- **G3.2' no-collapse: PASS** (min per-dim KL 0.64 nats).
+- **G3.3 OOD stats: PASS** (in every summary).
+- **G3.4 training sanity: PASS** (best_epoch 569).
+- **G3.1' downstream adequacy: FAIL** — floor AND ratio:
+  - Floor: the PCA-x-scores arm plateaus at 0.0411-0.0413 (d = 4 and 6)
+    against the 0.0385 `pca_linear` floor. It never clears it at any
+    dimension.
+  - Ratio: the VAE arm trails the PCA arm by 31-48% at d >= 3 (selected:
+    1.48). Only at d=2 with beta <= 0.01 do the arms match (0.99).
+
+## Why: the floor is unreachable by construction (decisive diagnostic)
+
+Two probe ceilings, computed against the frozen VAE-Y on the same folds:
+
+| probe | val y-space RMSE |
+|---|---|
+| oracle: true mu2 -> decoder-Y | **0.00192** (the codec is superb) |
+| ridge from the FULL 16-bin X -> mu2 -> decoder-Y | **0.0422** |
+| best any-dim PCA-scores ridge arm (d=4) | 0.0411 |
+| G3.1' floor (`pca_linear`, direct 25-comp linear map to y) | 0.0385 |
+
+Even the complete profile, linearly probed into mu2, cannot clear the floor.
+The binding constraint is the **linearity of the ridge probe** — the
+f_gas -> mu2 map is nonlinear (consistent with the F4.2 finding that the
+f_gas -> SP(k) map is nonlinear at 2x) — not the x-codec's dimension or
+quality. The C1 floor, as operationalized (a ridge-probe arm vs a direct
+linear baseline), conflates probe expressiveness with codec adequacy: no
+x-codec, however perfect, can pass it on this data. Note Stage 4's actual
+mapping ladder is exactly the nonlinear probe this gate lacks (rungs 2-3).
+
+## Findings for the maintainer (reported, not acted on)
+
+1. **Gate design:** G3.1' is the second gate whose operationalization broke
+   on contact with clean data (after the G2.1' fraction). A repaired form
+   needs either a nonlinear probe (e.g. the Stage 4 MLP rung as the arm) or
+   a floor derived from the same two-stage linear pathway (e.g. the full-X
+   ridge ceiling 0.0422) rather than from a direct-regression baseline.
+2. **Real representation finding inside the failure:** at matched dimension
+   under the same linear probe, VAE-X codes are 31-48% less mu2-informative
+   than raw PCA scores at d >= 3 — the VAE spends capacity on
+   reconstruction-relevant but downstream-irrelevant structure. At d=2,
+   low beta, they match. This is a genuine, reportable property, separable
+   from the gate-design problem.
+3. **Selection-criterion mismatch:** B1 selects by X-recon RMSE (best:
+   ld=6 beta=1), but downstream adequacy anti-correlates with it (that
+   config has the WORST ratio, 1.48; the best ratio in-grid is
+   ld=2 beta=0.001 at 0.989). If the pipeline's goal is the composite, the
+   Stage 3 selection rule optimizes the wrong objective.
+
+STOPPED per GR5 / F6.1 (E6.3 logic: the Stage 3 options menu stays closed;
+its reopening — or a gate repair — is a maintainer edit). Stage 4 remains
+parked; no composite was trained.
+
+---
+
+# [SUPERSEDED - corrupted-X era] # Dual-VAE Stage 3 gate report — letter-pass, substantive FAIL: STOPPED
 
 Tag 20260702, amended gates (B6). Implementation commit `67c11df` preceded the
 runs. Frozen VAE-Y: `20260705T232035Z__592313b6__e863c23` (Stage 2 selected).
