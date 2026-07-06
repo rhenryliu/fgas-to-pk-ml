@@ -78,18 +78,18 @@ from stage2_vae_y import (
     latent_param_correlations,
 )
 
-# Stage 1 canonical PCA-on-X run on the pinned tag (finding reference).
-STAGE1_PCA_X_RUN_ID = "20260706T061039Z__129449f5__3e94bcc"
+# Stage 1 canonical PCA-on-X run on the pinned tag + crop (finding reference).
+STAGE1_PCA_X_RUN_ID = "20260706T185651Z__4b5b02ea__a4ba5aa"
 
 # G3.1' guardrail: VAE-X arm <= this factor x PCA-x-scores arm (B6).
 G31_GUARDRAIL = 1.05
 
 # Amendment 2, C1 (anti-vacuous-pass floor): the ratio test is valid only if
 # the PCA-x-scores arm's val y-space RMSE clears the Stage 1 `pca_linear`
-# baseline on the same tag and folds (tag 20260706, Branch-A clean data:
-# run 20260706T061051Z__1f810c16__3e94bcc). A mutual-failure ratio of ~1 must
-# never pass again.
-G31_FLOOR_PCA_LINEAR_VAL_RMSE = 0.038203
+# baseline on the same tag, folds, and radial scope (tag 20260706, R < 10
+# crop: run 20260706T185703Z__a760845e__a4ba5aa). A mutual-failure ratio of
+# ~1 must never pass again.
+G31_FLOOR_PCA_LINEAR_VAL_RMSE = 0.038537
 
 
 def ood_reference_stats(mu: np.ndarray) -> dict:

@@ -69,7 +69,7 @@ from stage1_pca_dimensionality import (
 DEFAULT_DATA_CONFIG = "scripts/configs/data/config_dual_vae.yaml"
 
 # Stage 1 canonical PCA-on-Y run (the numbers recomputed here must match it).
-STAGE1_PCA_Y_RUN_ID = "20260706T061040Z__85a299a1__3e94bcc"
+STAGE1_PCA_Y_RUN_ID = "20260706T185652Z__b2db7ddd__a4ba5aa"
 
 # The swept latent dimensionalities (decision F0.3).
 LATENT_DIMS = (2, 3, 4)
@@ -106,8 +106,9 @@ COLLAPSE_KL_MIN = 0.01
 # equivalently codec <= base * sqrt(1.01^2 - 1). The former 10% linear
 # fraction is superseded as a proxy for exactly this criterion.
 # BEST_BASELINE_VAL_RMSE must track the current Stage 1 table (override via
-# --g21-reference); value below is the F4 cropped-config refresh.
-BEST_BASELINE_VAL_RMSE = 0.017012  # PROVISIONAL until the F4 table lands
+# --g21-reference): F4 cropped-config refresh, mlp_regressor, run
+# 20260706T185713Z__c62b6ed0__a4ba5aa.
+BEST_BASELINE_VAL_RMSE = 0.019378
 G21_MAX_FLOOR_INFLATION = 0.01
 G21_QUADRATURE_FACTOR = float(np.sqrt((1.0 + G21_MAX_FLOOR_INFLATION) ** 2 - 1.0))
 
