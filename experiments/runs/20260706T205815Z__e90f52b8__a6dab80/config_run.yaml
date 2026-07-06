@@ -1,0 +1,26 @@
+model: probe_codec_selection
+model_params:
+  probe:
+    hidden: 128
+    n_layers: 2
+    epochs: 2000
+    lr: 0.001
+    weight_decay: 0.0001
+    batch_size: 128
+    val_frac: 0.1
+  seeds:
+  - 0
+  - 1
+  - 2
+seed: 0
+split:
+  train_frac: 0.7
+  val_frac: 0.1
+  test_frac: 0.2
+  seed: 100
+evaluation:
+  suppressed_thresholds:
+  - 0.95
+  - 0.9
+  - 0.8
+write_root: null
