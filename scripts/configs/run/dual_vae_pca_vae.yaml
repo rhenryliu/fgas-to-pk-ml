@@ -1,0 +1,45 @@
+# RunConfig for the dual_vae composite, Arm P: (codec_x, codec_y) = (pca, vae).
+# Declared test configuration 2 of 3 (see
+# experiments/notes/dual_vae_test_declaration.md). Hyperparameters are the
+# staged selections on the pinned context (tag 20260706, R < 10 crop):
+# VAE-Y from Stage 2 (ld=3, beta=1e-4); PCA-x codec d=4 (the best
+# Stage 4.0 reference arm; beta_x is inert for a pca codec); MDN
+# mapping (rung 3, K=3) from Stage 4.
+#
+#     python scripts/run.py --config-data scripts/configs/data/config_dual_vae.yaml \
+#                           --config-run  scripts/configs/run/dual_vae_pca_vae.yaml
+
+model: dual_vae               # registry name (fgas_spk.models.REGISTRY)
+model_params:
+  codec_x: pca
+  codec_y: vae
+  latent_dim_x: 4          # PCA codec dimension (best Stage 4.0 reference arm)
+  latent_dim_y: 3
+  beta_x: 0.01
+  beta_y: 1.0e-4
+  hidden: 128
+  n_layers: 2
+  epochs: 5000                # VAE codec schedule (best-epoch restore inside)
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  dropout: 0.0
+  batch_size: 128
+  anneal_epochs: null         # -> epochs // 4, linear KL warm-up
+  val_frac: 0.1               # internal holdout for best-epoch restore
+  mapping: mdn                # rung 3 (probabilistic; predict_samples enabled)
+  mdn_components: 3
+  map_epochs: 2000
+
+seed: 0
+
+# Pinned grouped-by-sim_index split (identical across every dual-VAE stage).
+split:
+  train_frac: 0.7
+  val_frac: 0.1
+  test_frac: 0.2
+  seed: 100
+
+evaluation:
+  suppressed_thresholds: [0.95, 0.9, 0.8]
+
+write_root: null
