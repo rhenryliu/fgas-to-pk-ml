@@ -829,3 +829,63 @@ F7. **Housekeeping.** F7.1 notes citing the old narrow-band-collapse scatter
     (guard redesign, crop ruling, F3.3 census outcome). F7.3 no expectations
     about post-crop baselines are encoded anywhere; report what the data
     shows.
+
+---
+---
+
+# Maintainer amendment 5 (2026-07-06): retire G3.1' — probe-based codec selection at Stage 4
+
+Recorded verbatim; resolves the Stage 3 STOP. G3.1' is retired as
+**structurally malformed**: its C1 floor compared a two-stage pathway
+(x -> linear ridge -> latent bottleneck, z-space objective -> nonlinear
+decode) against a direct full-rank linear map (`pca_linear`) — not
+like-for-like. Evidence: linear-probe ceiling from the complete profile
+0.0422 > floor 0.0385 while the oracle sits at 0.00192; the gate was
+unreachable for any codec. The nonlinear probe the gate lacked is Stage 4's
+rung 2, so codec selection and adequacy move there. No new Stage 3 machinery;
+no retraining — the 16 committed Stage 3 configurations are consumed as
+frozen candidates. [H5.1: the amendment-2 C1 floor is hereby excised from the
+hardened-gates set; G3.4 and the other C-series hardening remain in force.]
+
+H1. **Retire G3.1' and preserve its findings.** Stage 3 gate set is now
+    G3.2' / G3.3 / G3.4; the VAE-X-vs-PCA-on-X reconstruction comparison
+    remains a reported finding. Promoted findings (numbers + run_ids in
+    `experiments/notes/`): F-1 (VAE-X codes 31-48% less mu2-informative than
+    PCA-x scores at d >= 3 under an identical LINEAR probe; parity at d=2
+    low beta; caveat: a linear probe cannot read nonlinearly-coded
+    information — H3 re-measures under the nonlinear probe) and F-2 (the B1
+    best-X-recon selection rule anti-correlates with downstream adequacy:
+    1.48 worst vs 0.989 best ratio). H1.4: one-line sanity note attributing
+    the full-profile-ridge (0.0422) vs 6-dim-PCA-arm (0.0413) inversion
+    after a lambda-grid check.
+H2. **Stage 3 output redefined:** every grid configuration passing G3.2' and
+    G3.4 enters the candidate set carried to Stage 4 (run_ids listed in the
+    Stage 3 gate report). VAE-Y selection unaffected (ld=3, beta=1e-4).
+H3. **New Stage 4.0 — probe-based codec selection and adequacy.**
+    H3.1 fixed probe: the Stage 4 rung-2 MLP recipe, frozen in the script,
+    no per-arm tuning, 3 seeds per arm; metric = mean over seeds of val
+    y-space RMSE after decoding probe outputs through the frozen VAE-Y
+    decoder (targets mu2, fit in z-space, judged in y-space; the objective
+    mismatch is inherent to F0.5, identical across arms, and is what Stage 6
+    later addresses). H3.2 arms: (a) ceiling = full cropped profile;
+    (b) reference = PCA-x scores d in {2, 3, 4, 6}; (c) candidates = mu1
+    from every Stage 3 candidate. H3.3 **G4.0a (STOP on fail):** the ceiling
+    arm must beat the current Stage 1 `pca_linear` val RMSE (runtime-
+    relative) — else the dual-codec architecture is unviable on this data.
+    H3.4 selection: best candidate probe metric; tiebreak smaller latent
+    dimension, then better X-reconstruction. H3.5 **G4.0b (graded):**
+    ratio = selected / best reference arm; <= 1.05 clean pass;
+    (1.05, 1.25] proceed with documented caveat (5b adjudicates);
+    > 1.25 STOP. Constants maintainer-set and amendable. H3.6 reported
+    findings (no gates, no encoded expectations): ceiling-vs-selected gap,
+    ceiling-vs-`mlp_regressor` gap, and the F-1 re-measurement under the
+    nonlinear probe.
+H4. **Ladder proceeds on the selected codec:** rungs 1-3 and gates G4.1 /
+    G4.2 / G4.3 unchanged (rung 2 may reuse the selected candidate's probe
+    fits if seeds/protocol match). On G4 pass: Stages 5 and 5b per spec, no
+    further maintainer stops, subject to GR5; the mandatory 5b (pca, pca)
+    arm gives any G4.0b-documented gap its definitive full-metric
+    comparison.
+H5. **Housekeeping.** Spec C1 floor excised (pointer above); Stage 3 gate
+    report updated supersede-and-append (the FAIL stands as history); no
+    expectations about probe outcomes encoded anywhere.
