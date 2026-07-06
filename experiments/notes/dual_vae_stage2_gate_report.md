@@ -1,4 +1,56 @@
-# Dual-VAE Stage 2 gate report — tag 20260706 (Branch A): G2.1' FAIL, STOPPED
+# Dual-VAE Stage 2 gate report — tag 20260706, amendment 4 (F5): PASS
+
+Resolves the previous section's STOP via the F1 gate reform (quadrature
+criterion) and the F5.1 capped beta extension. Implementation commit
+`8522dd4` preceded the new runs. The crop does not touch y or X_params, so
+the 12 existing 20260706 runs stand (F5.2); the sweep is those 12 plus the
+three beta = 1e-4 extension runs.
+
+## F5.1 extension runs (beta = 1e-4, 5000 epochs, seed 0)
+
+| ld | val recon RMSE | PCA @ dim | per-dim KL (train) | best_epoch | run_id |
+|---|---|---|---|---|---|
+| 2 | 0.003718 | 0.00287 | 13.9, 6.7 | 1810 | `20260706T190600Z__5540aa6d__8522dd4` |
+| 3 | **0.0019234** | 0.00134 | 15.7, 4.7, 5.6 | 2716 | `20260706T190601Z__8a715039__8522dd4` **(selected)** |
+| 4 | 0.002171 | 0.00100 | 5.7, 4.2, 15.6, 8.9 | 2593 | `20260706T190602Z__ede885e9__8522dd4` |
+
+## Selection (B1 rules over the full 15-config sweep)
+
+**latent_dim_y = 3, beta = 1e-4, run `20260706T190601Z__8a715039__8522dd4`**
+(val recon RMSE 0.0019234, posterior-mean decode) — edging out the previous
+selection (ld=4, beta=1e-3, 0.001969). No collapsed dimensions (min per-dim
+KL 4.7 nats); A_j delta-like as expected and documented (6.7e3 - 7.0e4).
+
+## Gate verdicts
+
+- **G2.1' (F1 quadrature form): PASS.** base = 0.019378 (`mlp_regressor`,
+  F4 cropped table, `20260706T185713Z__c62b6ed0__a4ba5aa`); codec = 0.0019234;
+  floor inflation sqrt(base^2 + codec^2)/base - 1 = **0.49%** <= 1%
+  (bar: codec <= 0.002747).
+- **G2.2': PASS** (re-evaluated for the new selection: KLs 15.7/4.7/5.6).
+- **G2.4: PASS** (GR7 string in all new summaries).
+- **G2.3 verdict (i) updated with the completed rate-distortion curve:**
+  still **disagree**, now with saturation evidence. At ld=3 the curve
+  beta = 1 -> 1e-4 reads 0.00451, 0.00317, 0.00203, 0.00200, 0.00192 vs
+  PCA-3's 0.00134: monotone improvement that saturates around 0.0019 —
+  the remaining VAE-vs-PCA gap is NOT rate-limited (one more decade bought
+  3.6%), so it is attributable to decode-from-sampled-z blur and finite
+  optimization, not to the KL budget. Per the F5.1 cap, no further beta
+  extensions in any later cycle. Verdicts (ii)/(iii) unchanged.
+- **F5.4 finding run (ld=6, beta=1e-4, not gated, excluded from codec
+  selection; its ledger `selected` flag is within-invocation only):** run
+  `20260706T190915Z__7b01dd1f__8522dd4`, val recon 0.002077. All six
+  dimensions carry active KL (3.7-16.2 nats) — additional dimensions DO
+  activate at low rate cost — but reconstruction is worse than ld=3:
+  beyond ~3 dimensions capacity adds nothing on this target.
+
+**Frozen VAE-Y for Stages 3-5:**
+`<scratch>/models/20260706T190601Z__8a715039__8522dd4/model.joblib`
+(ld=3, beta=1e-4, hidden 128 x 2, epochs 5000, lr 1e-3, seed 0).
+
+---
+
+# [SUPERSEDED — 10%-fraction gate, pre-amendment-4] Stage 2 gate report — tag 20260706 (Branch A): G2.1' FAIL, STOPPED
 
 **C3 conditional status resolved (E5.3): the definitive G2.1' evaluation
 against the clean-data bar is a FAIL.** Full 12-run sweep re-run on tag
