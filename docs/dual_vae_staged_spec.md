@@ -698,3 +698,60 @@ D1 Not launching Stage 4 on the epoch-0 codes was the correct call; Stage 4
    VAE-X exists.
 D2 GR8 commit discipline continues; the forensics note commit is tagged
    `[stage 3.0 verdict: <corruption|heavy-tails|mixed>]`.
+
+---
+---
+
+# Maintainer amendment 3 (2026-07-06): Branch A — builder statistic fix + rebuild
+
+Recorded verbatim. Resolves the Stage 3.0 STOP: verdict **corruption**
+accepted, located in this repo's builder statistic (mean of per-halo ratios
+with an unguarded near-zero denominator), present in both tags; re-binning
+exonerated.
+
+**Definition ruling (CLAUDE.md rule 3, resolved by maintainer):** the correct
+statistic is the ratio of stacked profiles — the established convention of the
+maintainer's measurements paper and data-side pipeline (stack ΔΣ_ionized over
+the selected halos, stack ΔΣ_total likewise, divide once, normalize by f_b).
+Note the identity: ratio of per-halo *means* equals ratio of per-halo *sums*
+over the same halo set, so "mean then ratio" and "sum then ratio" are the same
+estimator; implement whichever is cleaner.
+
+**Not in scope:** no F0.2 amendment, no VAE-X likelihood or preprocessing
+change, no gate changes. The hardened gates (G3.1' floor, G3.4, C3) stand
+exactly as committed — running the fixed data through unchanged gates is the
+experiment. Upstream (lindajin) products need no changes and no bug report.
+
+E1. **Builder fix.** E1.1 ratio-of-stacked-means in `build_fgas_spk_dataset`
+    (pool halos x projections per bin, divide once, / f_b). E1.2 verify the
+    pooling convention against the reference notebook first; STOP on conflict.
+    E1.3 docstring states the statistic and why.
+E2. **Guards, provenance stamp, tests.** E2.1 build-time HARD FAIL on
+    non-finite or out-of-`fgas_sanity_range` values (default [-1.0, 3.0],
+    PROVISIONAL); realized per-bin min/max recorded in `__meta__`. E2.2
+    `fgas_definition` stamp in `__meta__` (additive; the discriminator against
+    old-statistic datasets). E2.3 regression tests (near-zero-denominator cell;
+    stamp + realized range). r12_mpch failures stay out of scope (D1).
+E3. **Rebuild** tag `'20260706'` (pinned variant). E3.2 identity assertions
+    vs 20260702: spk, k grid, radial grid, params bitwise-identical; ONLY fgas
+    may differ; STOP on any other difference. E3.3 repin config; A3 same-tag
+    rule applies.
+E4. **Stage 1 re-run** (third regeneration; superseded headings kept). E4.2
+    new deliverable: clean-data re-verification of the map-nonlinearity
+    evidence (val-fold pred-vs-true scatters for pca_linear / mlp /
+    mlp_regressor, global + suppressed RMSE, predicted-value ranges) —
+    reported finding, no gate. E4.3 re-evaluate G1.
+E5. **Stage 2 re-run** (full sweep; runtime-relative G2.1' bar). E5.2 must
+    reproduce the 20260702 results to seed-level variation (y and params
+    unchanged) — material deviation is STOP-and-report. E5.3 resolve the C3
+    conditional status.
+E6. **Stage 3 re-run** with unchanged likelihood and the hardened gates. On
+    G3' pass: unpark Stage 4 (34166de) and proceed through Stages 4, 5, 5b
+    without further maintainer stops, subject to GR5. If Stage 3 fails on
+    clean data, STOP per GR5 (the deferred options return, with tails then
+    known to be genuine).
+E7. **Housekeeping.** E7.1 resolution addendum to the forensics note. E7.2 the
+    3.0.5 diagnostic (0.0403) predicts nothing about the new baselines; do not
+    cite it as an expectation. E7.3 ledger note: all pre-20260706 X-dependent
+    results are superseded by definition change; the stamp is the
+    discriminator.
