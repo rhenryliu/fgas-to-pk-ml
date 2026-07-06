@@ -1,4 +1,44 @@
-# Dual-VAE Stage 1 gate report — re-run on tag 20260702 (amendment A2)
+# Dual-VAE Stage 1 gate report — re-run on tag 20260706 (Branch A, corrected f_gas statistic)
+
+Third regeneration, per amendment 3 (E4). Tag `20260706` carries the
+ratio-of-stacked-profiles f_gas (definition stamped in `__meta__`); E3.2
+identity assertions passed (only fgas changed vs 20260702). Implementation
+commits `e3b55e6`/`3e94bcc` preceded the runs.
+
+## Gate G1 (tag 20260706) — PASS
+
+- **G1.1**: `pca_x_recon` `20260706T061039Z__129449f5__3e94bcc`, `pca_y_recon`
+  `20260706T061040Z__85a299a1__3e94bcc`; bitwise-reproducible on re-invocation
+  (`...061043Z` pair). PCA-on-X is now a sane compression problem: val recon
+  RMSE 0.0526 (n=1) -> 0.0174 (n=10), values O(0.01-1) — the corrected X has
+  no pathological tail for PCA to chase. PCA-on-Y bitwise-identical to both
+  prior tags (y unchanged), B5 truncation table unchanged.
+- **G1.2**: baseline table regenerated (both prior tables under superseded
+  headings). Val RMSE: `mlp` **0.017012** (`20260706T061104Z__8fc38d33__3e94bcc`),
+  `mlp_regressor` 0.020370 (`20260706T061100Z__ee4485c8__3e94bcc`),
+  `pca_linear` 0.038203 (`20260706T061051Z__1f810c16__3e94bcc`). All three
+  improve 2-3x over the corrupted-X numbers — the corrupted cells were
+  genuinely destroying usable signal.
+
+**Runtime-relative references fixed here:** G2.1' bar = 0.1 x 0.017012 =
+**0.0017012**; G3.1' C1 floor = `pca_linear` = **0.038203**.
+
+## E4.2 — map-nonlinearity re-verification (finding, no gate)
+
+Re-established, in tempered form. The f_gas -> SP(k) map remains genuinely
+nonlinear on clean data: `mlp` beats `pca_linear` by 2.2x globally (0.0170 vs
+0.0382) and by 2.5x in the deep-suppression regime (0.0433 vs 0.1076 at
+SP<0.8). However, the historical "pca_linear collapses to a narrow band"
+evidence was partly a contamination artifact: on clean X, `pca_linear` spans
+0.69 of the true val range ([0.610, 1.052] vs true [0.461, 1.105]) — genuine
+under-coverage of the extremes, but not the near-constant collapse seen on
+corrupted X. Scatters: `figures/2026-07/07-05/stage1_baselines__20260706__e42_pred_vs_true_val.png`.
+Any paper text citing the old scatter behaviour should be revised accordingly
+(D3 framing guard applies: this is evidence about the MAP, not the y-manifold).
+
+---
+
+# [SUPERSEDED — tag 20260702, superseded f_gas statistic] Stage 1 gate report (amendment A2)
 
 Spec amendment of 2026-07-05 (`docs/dual_vae_staged_spec.md`, commit `5d6fe55`)
 repinned the context from tag `20260617` to `20260702` and added the B5
