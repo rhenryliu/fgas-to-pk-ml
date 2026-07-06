@@ -81,15 +81,13 @@ from stage2_vae_y import (
 # Stage 1 canonical PCA-on-X run on the pinned tag + crop (finding reference).
 STAGE1_PCA_X_RUN_ID = "20260706T185651Z__4b5b02ea__a4ba5aa"
 
-# G3.1' guardrail: VAE-X arm <= this factor x PCA-x-scores arm (B6).
-G31_GUARDRAIL = 1.05
-
-# Amendment 2, C1 (anti-vacuous-pass floor): the ratio test is valid only if
-# the PCA-x-scores arm's val y-space RMSE clears the Stage 1 `pca_linear`
-# baseline on the same tag, folds, and radial scope (tag 20260706, R < 10
-# crop: run 20260706T185703Z__a760845e__a4ba5aa). A mutual-failure ratio of
-# ~1 must never pass again.
-G31_FLOOR_PCA_LINEAR_VAL_RMSE = 0.038537
+# RETIRED GATE (amendment 5, H1): G3.1' and its C1 floor are no longer gates
+# -- the linear ridge probe was structurally malformed (unreachable by
+# construction; see the Stage 3 gate report). The two-arm ridge comparison is
+# kept as a REPORTED FINDING only; codec selection and adequacy live in
+# Stage 4.0's nonlinear-probe protocol (scripts/stage4_0_probe_selection.py).
+G31_GUARDRAIL = 1.05  # retained for the finding's ratio bookkeeping
+G31_FLOOR_PCA_LINEAR_VAL_RMSE = 0.038537  # retained for the finding only
 
 
 def ood_reference_stats(mu: np.ndarray) -> dict:
@@ -399,21 +397,22 @@ def main(argv: list[str] | None = None) -> int:
               f"run_id: {record.run_id}"
               + ("  [SELECTED]" if is_selected else ""))
 
-    # --- gate headline -------------------------------------------------------
+    # --- gate headline (amendment 5: gates are G3.2'/G3.3/G3.4; the ridge
+    # probe is a finding; VAE-X output is the H2 CANDIDATE SET, not a single
+    # selection -- "selected" above is the within-grid B1 point, retained for
+    # bookkeeping only) -------------------------------------------------------
+    candidates = [r for r in results if r["collapse_ok"] and r["sanity_ok"]]
     print(json.dumps({
-        "G3.1prime_downstream_adequacy": selected["adequacy"]["pass"],
-        "G3.1prime_ratio": selected["adequacy"]["ratio"],
-        "G3.1prime_floor_ok": selected["adequacy"]["floor_ok"],
         "G3.2prime_no_collapse": bool(selected["collapse_ok"]),
         "G3.3_ood_stats_present": True,
         "G3.4_training_sanity": bool(selected["sanity_ok"]),
+        "finding_ridge_probe_ratio": selected["adequacy"]["ratio"],
         "finding_vae_vs_pca_x_recon": {
             "vae": selected["val_recon_rmse"],
             "pca": selected["pca_val_rmse_matched"],
         },
-        "selected_latent_dim": selected["latent_dim"],
-        "selected_beta": selected["beta"],
-        "selected_run_id": selected["run_id"],
+        "candidate_set_size": len(candidates),
+        "candidate_run_ids": [r["run_id"] for r in candidates],
     }, indent=2))
     return 0
 

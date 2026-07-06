@@ -1,4 +1,27 @@
-# Dual-VAE Stage 3 gate report — tag 20260706, R < 10 crop: G3.1' FAIL (gate unreachable by construction), STOPPED
+# Stage 3 resolution (amendment 5, 2026-07-06): G3.1' retired; candidate set to Stage 4.0
+
+The maintainer retired G3.1' as **structurally malformed** on the evidence
+below (the FAIL stands as recorded history). Stage 3's gate set is now
+G3.2' / G3.3 / G3.4 — **all PASS** on the 16-run grid — and Stage 3's output
+is the **candidate set** (H2.1): every grid configuration passed both G3.2'
+and G3.4, so all 16 enter Stage 4.0's probe-based selection:
+
+`20260706T200035Z__923fa7f0`, `200036Z__cf35add9`, `200037Z__e72e3fab`,
+`200037Z__fc11d46c`, `200038Z__75e83299`, `200039Z__a58053de`,
+`200039Z__3080064e`, `200040Z__f4536019`, `200041Z__d478d3d0`,
+`200041Z__0325e0a7`, `200043Z__fd693065`, `200043Z__794d86af`,
+`200044Z__a43ec084`, `200045Z__7a4a4ba0`, `200046Z__50a0f2fd`,
+`200047Z__2f14b4a6` (all `__8cbe5b2`).
+
+The failed gate's two real findings are promoted to
+`experiments/notes/dual_vae_findings.md` (F-1, F-2, with the H1.4 lambda
+sanity note). Codec selection and adequacy now live in Stage 4.0
+(`scripts/stage4_0_probe_selection.py`; gates G4.0a / G4.0b). VAE-Y
+selection is unaffected (ld=3, beta=1e-4).
+
+---
+
+# [historical FAIL record — gate since retired] Dual-VAE Stage 3 gate report — tag 20260706, R < 10 crop: G3.1' FAIL (gate unreachable by construction), STOPPED
 
 Full grid per the spec's own widening rule ("sweep {2, 3, 4, 6} only if
 G3.1' fails at 2" — it did): 16 runs, latent_dim_x in {2, 3, 4, 6} x beta in
