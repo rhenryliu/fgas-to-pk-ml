@@ -62,6 +62,49 @@ _PROFILE_FILENAME_TEMPLATE = (
 # Projections stacked in the products.
 _PROJECTIONS = ("xy", "xz", "yz")
 
+# The gas-fraction statistic this builder computes, stamped verbatim into the
+# dataset ``__meta__`` (``fgas_definition``). Datasets lacking this stamp, or
+# carrying a different one, were built with the superseded per-halo-ratio
+# statistic and must not be compared against stamped ones (Branch A, E2.2).
+FGAS_DEFINITION = (
+    "ratio of stacked profiles: nanmean of Delta Sigma_ionized over the "
+    "selected halos x 3 projections per radial bin, divided by the same "
+    "nanmean of Delta Sigma_total, divided by the per-simulation f_b. "
+    "Matches the measurements-paper convention and the reference notebook's "
+    "ratio-of-means; immune to per-halo Delta Sigma_total zero-crossings at "
+    "R >~ 0.7 Mpc/h (see experiments/notes/dual_vae_stage3_forensics.md)."
+)
+
+# Build-time sanity range for the stacked f_gas (E2.1). PROVISIONAL, maintainer
+# to confirm; a build producing any value outside this range hard-fails.
+DEFAULT_FGAS_SANITY_RANGE = (-1.0, 3.0)
+
+
+def fgas_meta_stamp(
+    fgas: np.ndarray, sanity_range: tuple[float, float]
+) -> dict:
+    """Return the additive ``__meta__`` stamp for a built f_gas array (E2.1/E2.2).
+
+    Args:
+        fgas (np.ndarray): The built array, shape (n_sims, n_nd, n_radii).
+        sanity_range (tuple[float, float]): The build's validated range.
+
+    Returns:
+        dict: ``fgas_definition`` (the statistic, verbatim),
+            ``fgas_sanity_range``, and ``fgas_realized_range_per_bin`` with
+            per-radial-bin ``min`` / ``max`` lists, so every build documents
+            its own realized range.
+    """
+    fgas = np.asarray(fgas)
+    return {
+        "fgas_definition": FGAS_DEFINITION,
+        "fgas_sanity_range": [float(sanity_range[0]), float(sanity_range[1])],
+        "fgas_realized_range_per_bin": {
+            "min": [float(v) for v in fgas.min(axis=(0, 1))],
+            "max": [float(v) for v in fgas.max(axis=(0, 1))],
+        },
+    }
+
 
 def _load_one_simulation(
     profile_path: Path, rank_key: str
@@ -76,10 +119,16 @@ def _load_one_simulation(
             producer does not save ``SubhaloMStar``.
 
     Returns:
-        dict: With keys ``'fgas'`` (n_radii, n_proj, n_halos) -- the three
-            projections kept on a separate axis -- ``'halo_masses'`` (n_halos,,
-            descending, per distinct halo), ``'radii_mpch'`` (n_radii,), and
-            ``'fb'``.
+        dict: With keys ``'ionized'`` and ``'total'`` -- the per-halo
+            ``Delta Sigma`` profiles, each (n_radii, n_proj, n_halos) with the
+            three projections on a separate axis and the halo axis re-ranked
+            descending -- ``'halo_masses'`` (n_halos,, descending, per distinct
+            halo), ``'radii_mpch'`` (n_radii,), and ``'fb'``. The gas-fraction
+            ratio is deliberately NOT formed here: it is a ratio of *stacked*
+            profiles, taken in :func:`build_fgas_spk_dataset` after the
+            number-density cut (see the Stage 3.0 forensics note -- a per-halo
+            ratio is singular wherever a halo's ``Delta Sigma_total`` crosses
+            zero, which is generic at R >~ 0.7 Mpc/h).
 
     Raises:
         FileNotFoundError: If the profile file is absent.
@@ -113,10 +162,6 @@ def _load_one_simulation(
     )
 
     fb = float(data["fb"])
-    # Gas fraction per halo, normalised by the cosmic baryon fraction.
-    with np.errstate(divide="ignore", invalid="ignore"):
-        fgas = ionized / total / fb  # (n_radii, n_proj, n_halos)
-
     halo_masses = np.asarray(data["halo_masses"])  # M_500c [M_sun/h], per halo
 
     if rank_key == "halo_mass":
@@ -131,7 +176,8 @@ def _load_one_simulation(
         raise ValueError(f"Unknown rank_key: {rank_key!r}")
 
     # Reorder the halo axis (shared across projections) by descending mass.
-    fgas = fgas[:, :, order]
+    ionized = ionized[:, :, order]
+    total = total[:, :, order]
     halo_masses = halo_masses[order]
 
     # radii_mpch = np.asarray(data["r12_to_mpch"])
@@ -140,7 +186,8 @@ def _load_one_simulation(
         radii_mpch = radii_mpch[0]
 
     return {
-        "fgas": fgas,
+        "ionized": ionized,
+        "total": total,
         "halo_masses": halo_masses,
         "radii_mpch": radii_mpch,
         "fb": fb, # type: ignore
@@ -209,15 +256,32 @@ def build_fgas_spk_dataset(
     sim_ids: Sequence[int] | None = None,
     rank_key: str = "halo_mass",
     params_path: str | Path | None = None,
+    fgas_sanity_range: tuple[float, float] = DEFAULT_FGAS_SANITY_RANGE,
     progress: Callable[[int, int], None] | None = None,
 ) -> FgasSpkDataset:
     """Assemble the full f_gas(R) to SP(k) dataset across all simulations.
 
     For each simulation and each target number density, the N most massive
-    *distinct* halos (under ``rank_key``) are selected; the three projections of
-    each halo are averaged first, then the mean gas-fraction profile is taken
-    across those halos, where ``N = int(number_density * box_size_mpch**3)``. The
-    per-simulation suppression curve is read from a single shared file.
+    *distinct* halos (under ``rank_key``) are selected, where
+    ``N = int(number_density * box_size_mpch**3)``, and the gas fraction is the
+    **ratio of stacked profiles** (:data:`FGAS_DEFINITION`): ``Delta
+    Sigma_ionized`` is nanmean-pooled over the selected halos and all three
+    projections per radial bin, ``Delta Sigma_total`` likewise, the two stacks
+    are divided once, and the result is normalised by the per-simulation
+    ``f_b``. This matches the observational estimator (stacked lensing over a
+    stacked sample) and the reference notebook's explicit ratio-of-means; it
+    replaced a per-halo ratio-then-average statistic that was singular
+    wherever one halo's ``Delta Sigma_total`` crossed zero (generic at
+    R >~ 0.7 Mpc/h) -- see ``experiments/notes/dual_vae_stage3_forensics.md``.
+    (Ratio of per-halo means equals ratio of per-halo sums over the same halo
+    set, so "mean then ratio" and "sum then ratio" are the same estimator.)
+    ``fgas_std`` propagates the two stacks' pooled standard deviations in
+    quadrature, mirroring the reference notebook:
+    ``|fgas| * sqrt((std_ion/mean_ion)^2 + (std_tot/mean_tot)^2)``.
+
+    The build **hard-fails** (E2.1) if any stacked f_gas value is non-finite
+    or falls outside ``fgas_sanity_range``. The per-simulation suppression
+    curve is read from a single shared file.
 
     Args:
         base_path_template (str): Template for each simulation's data directory,
@@ -236,6 +300,10 @@ def build_fgas_spk_dataset(
             to ``range(n_sims)`` inferred from the suppression file.
         rank_key (str, optional): Halo-ordering key for the number-density cut.
             Defaults to ``'halo_mass'`` (M_500c).
+        fgas_sanity_range (tuple[float, float], optional): Inclusive build-time
+            validation range for every stacked f_gas value; any violation (or
+            any non-finite value) hard-fails the build. Defaults to
+            :data:`DEFAULT_FGAS_SANITY_RANGE` ([-1.0, 3.0], provisional).
         progress (Callable, optional): Callback ``progress(i, n_total)`` invoked
             per simulation, for a progress bar. Defaults to None.
 
@@ -273,22 +341,35 @@ def build_fgas_spk_dataset(
         if radii_ref is None:
             radii_ref = loaded["radii_mpch"]
 
-        fgas = loaded["fgas"]               # (n_radii, n_proj, n_halos), halo axis desc by mass
+        ionized = loaded["ionized"]         # (n_radii, n_proj, n_halos), desc mass
+        total = loaded["total"]             # same shape and ordering
+        fb = loaded["fb"]
         masses = loaded["halo_masses"]      # (n_halos,), descending
-        n_halos_total = fgas.shape[2]
+        n_halos_total = ionized.shape[2]
 
         per_nd_mean = []
         per_nd_std = []
         per_nd_mass = []
         for n_halos in n_halos_per_nd:
             n_use = min(n_halos, n_halos_total)
-            block = fgas[:, :, :n_use]               # (n_radii, n_proj, n_use)
-            # Average over the projections first (repeat measurements of the same
-            # halo), then take statistics across the distinct halos.
-            halo_mean = np.nanmean(block, axis=1)    # (n_radii, n_use)
-            per_nd_mean.append(np.nanmean(halo_mean, axis=1))  # mean over halos
-            per_nd_std.append(np.nanstd(halo_mean, axis=1))    # halo-to-halo scatter
-            per_nd_mass.append(np.nanmean(masses[:n_use]))     # over distinct halos
+            ion_block = ionized[:, :, :n_use]        # (n_radii, n_proj, n_use)
+            tot_block = total[:, :, :n_use]
+            # Ratio of stacked profiles (FGAS_DEFINITION): pool halos and
+            # projections in one unweighted nanmean per bin, divide once, then
+            # normalise by f_b. The stacked denominator is far from zero, so no
+            # per-halo zero-crossing can poison the value.
+            mean_ion = np.nanmean(ion_block, axis=(1, 2))   # (n_radii,)
+            mean_tot = np.nanmean(tot_block, axis=(1, 2))
+            per_nd_mean.append(mean_ion / mean_tot / fb)
+            # Reference-notebook error propagation: the two stacks' pooled
+            # standard deviations combined in quadrature on the ratio.
+            std_ion = np.nanstd(ion_block, axis=(1, 2))
+            std_tot = np.nanstd(tot_block, axis=(1, 2))
+            per_nd_std.append(
+                np.abs(per_nd_mean[-1])
+                * np.sqrt((std_ion / mean_ion) ** 2 + (std_tot / mean_tot) ** 2)
+            )
+            per_nd_mass.append(np.nanmean(masses[:n_use]))   # over distinct halos
 
         fgas_rows.append(np.stack(per_nd_mean))       # (n_nd, n_radii)
         fgas_std_rows.append(np.stack(per_nd_std))
@@ -306,10 +387,31 @@ def build_fgas_spk_dataset(
             f"{suppression.shape[0]} vs {len(kept_ids)}."
         )
 
+    # E2.1 build-time validation: a single non-finite or out-of-range stacked
+    # f_gas value fails the whole build, loudly and with coordinates -- the
+    # Stage 3.0 corruption must never ship silently again.
+    fgas_all = np.stack(fgas_rows)                    # (n_sims, n_nd, n_radii)
+    bad = ~np.isfinite(fgas_all)
+    lo, hi = float(fgas_sanity_range[0]), float(fgas_sanity_range[1])
+    bad |= (fgas_all < lo) | (fgas_all > hi)
+    if bad.any():
+        sim_i, nd_i, bin_i = np.nonzero(bad)
+        listing = ", ".join(
+            f"(sim {kept_ids[s]}, nd {n}, bin {b}: {fgas_all[s, n, b]:.6g})"
+            for s, n, b in list(zip(sim_i, nd_i, bin_i))[:10]
+        )
+        raise ValueError(
+            f"Built f_gas violates the sanity range [{lo}, {hi}] or is "
+            f"non-finite in {int(bad.sum())} cell(s): {listing}"
+            + (" ..." if bad.sum() > 10 else "")
+            + ". The build is rejected (E2.1); inspect the source profiles or "
+            "adjust fgas_sanity_range deliberately."
+        )
+
     return FgasSpkDataset(
         radii_mpch=np.asarray(radii_ref),
         number_densities=np.asarray(number_densities),
-        fgas=np.stack(fgas_rows),            # (n_sims, n_nd, n_radii)
+        fgas=fgas_all,                       # (n_sims, n_nd, n_radii)
         fgas_std=np.stack(fgas_std_rows),
         k=k,
         suppression=suppression,

@@ -300,6 +300,7 @@ def save_dataset(
     notes: str | None = None,
     manifest_dir: str | Path | None = None,
     stamp_param_names: bool = True,
+    extra_meta: dict | None = None,
 ) -> Path:
     """Write a dataset to the scratch store under a consistent, self-describing name.
 
@@ -340,6 +341,12 @@ def save_dataset(
             ``camels_params`` there is nothing to stamp and the flag is a no-op.
             Set False to save a param matrix without stamping names (the loader
             then falls back to the registry by ``suite``).
+        extra_meta (dict, optional): Additional top-level ``__meta__`` keys,
+            merged verbatim (an **additive** extension: the frozen keys above
+            are unchanged and consumers must tolerate unknown keys, which the
+            loader's free-form meta dict already does). Used e.g. for the
+            builder's ``fgas_definition`` / realized-range stamps (Branch A,
+            E2.1/E2.2). May not collide with a reserved key. Defaults to None.
 
     Returns:
         Path: Path to the written ``.npz``.
@@ -347,6 +354,7 @@ def save_dataset(
     Raises:
         FileExistsError: If the target exists and ``overwrite`` is False.
         ValueError: If ``snapshot`` contradicts a non-None ``dataset.snapshot``,
+            if an ``extra_meta`` key collides with a reserved meta key,
             or if ``stamp_param_names`` is requested but the registered name count
             for ``suite`` does not match the parameter-matrix column count.
         KeyError: If ``stamp_param_names`` is requested for a ``suite`` with no
@@ -439,6 +447,16 @@ def save_dataset(
     # when present, so param-less / unstamped datasets keep the frozen meta keys.
     if param_names is not None:
         meta["camels_param_names"] = list(param_names)
+    # Additive caller-supplied keys (e.g. the builder's fgas_definition stamp).
+    # Reserved keys are protected so extra_meta can never silently rewrite the
+    # frozen contract fields.
+    if extra_meta:
+        collisions = sorted(set(extra_meta) & set(meta))
+        if collisions:
+            raise ValueError(
+                f"extra_meta keys collide with reserved meta keys: {collisions}."
+            )
+        meta.update(extra_meta)
 
     np.savez(npz_path, __meta__=json.dumps(meta), **arrays)
     # Always write the human-readable sidecar; metadata also lives inside the
