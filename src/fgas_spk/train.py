@@ -621,12 +621,27 @@ def _write_history_figure(model, label: str, extension: str = "png") -> Path | N
     else:
         fig, ax = plt.subplots(figsize=(6, 4))
         plotted = False
-        for key, value in history[0].items():
-            if key == "epoch" or isinstance(value, bool):
-                continue
-            if not isinstance(value, (int, float)):
-                continue
-            ax.plot(epochs, [r[key] for r in history], marker=".", label=key)
+        # A history may mix per-phase schemas (e.g. the dual_vae composite
+        # concatenates codec and mapping traces with different keys), so
+        # collect the numeric keys across ALL rows and plot each series over
+        # the rows that carry it, rather than indexing every row by the first
+        # row's keys.
+        numeric_keys: list = []
+        for row in history:
+            for key, value in row.items():
+                if key == "epoch" or isinstance(value, bool):
+                    continue
+                if isinstance(value, (int, float)) and key not in numeric_keys:
+                    numeric_keys.append(key)
+        for key in numeric_keys:
+            points = [
+                (epoch, row[key])
+                for epoch, row in zip(epochs, history)
+                if isinstance(row.get(key), (int, float))
+                and not isinstance(row.get(key), bool)
+            ]
+            ax.plot([p[0] for p in points], [p[1] for p in points],
+                    marker=".", label=key)
             plotted = True
         if not plotted:
             plt.close(fig)
