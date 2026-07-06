@@ -60,6 +60,19 @@ NOTE_PATH = "experiments/notes/dual_vae_baseline_table.md"
 # verbatim below (append-only provenance) and re-emitted by every regeneration;
 # no gate may compare against them (amendment A3: same-tag comparisons only).
 SUPERSEDED_APPENDIX = """
+## Superseded (tag 20260706, FULL radial grid — pre-crop) — do not compare against these
+
+Produced 2026-07-06 06:11Z on tag `20260706` with the full 20-bin radial
+grid, before amendment 4 (F2) cropped the modelled scope to R < 10 Mpc/h.
+Same tag and statistic as the current table; different modelled scope. Kept
+for provenance only.
+
+| model | run_id | val RMSE | val RMSE (SP<0.95) | val RMSE (SP<0.9) | val RMSE (SP<0.8) |
+|---|---|---|---|---|---|
+| `pca_linear` | `20260706T061051Z__1f810c16__3e94bcc` | 0.038203 | 0.054479 (n=1240) | 0.070513 (n=671) | 0.1076 (n=234) |
+| `mlp_regressor` | `20260706T061100Z__ee4485c8__3e94bcc` | 0.02037 | 0.029619 (n=1240) | 0.038467 (n=671) | 0.057557 (n=234) |
+| `mlp` | `20260706T061104Z__8fc38d33__3e94bcc` | 0.017012 | 0.024276 (n=1240) | 0.030958 (n=671) | 0.043275 (n=234) |
+
 ## Superseded (tag 20260702, superseded per-halo-ratio f_gas statistic) — do not compare against these
 
 Produced 2026-07-05 22:17Z on tag `20260702`. Superseded by the Branch-A
@@ -197,7 +210,9 @@ def _format_table(rows: list[dict], data_config, td) -> str:
         f"- DataConfig: `scripts/configs/data/config_dual_vae.yaml` "
         f"(suite `{data_config.suite}`, snap {data_config.snapshot}, "
         f"tag `{data_config.tag}`, nd indices "
-        f"{data_config.number_density_indices}, target `{data_config.target_mode}` "
+        f"{data_config.number_density_indices}, radial range "
+        f"{list(data_config.radial_range_mpch) if data_config.radial_range_mpch else 'full'} Mpc/h, "
+        f"target `{data_config.target_mode}` "
         f"k in {list(data_config.k_range)} h/Mpc, params "
         f"{data_config.camels_param_names})\n"
         f"- Dataset: `{td.source_path}`\n"

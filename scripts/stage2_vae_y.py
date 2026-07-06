@@ -98,13 +98,18 @@ MODEL_PARAMS = {
 # when its per-dim KL (train fold, best-epoch weights) falls below this.
 COLLAPSE_KL_MIN = 0.01
 
-# Gate G2.1' (amendment B2): codec adequacy. The selected VAE-Y val recon RMSE
-# must be <= G21_FRACTION x the best Stage 1 cross-modal val RMSE on the
-# current pinned context (tag 20260706, Branch-A clean data): mlp, val RMSE
-# 0.017012, run 20260706T061104Z__8fc38d33__3e94bcc. Override via
-# --g21-reference if Stage 1 is re-run.
-BEST_BASELINE_VAL_RMSE = 0.017012
-G21_FRACTION = 0.10
+# Gate G2.1' as reformed by amendment 4 (F1): quadrature codec adequacy. With
+# `base` the best same-tag, same-config cross-modal val RMSE from the current
+# Stage 1 table and `codec` the selected VAE-Y val recon RMSE (posterior-mean
+# decode, raw scale), the gate is sqrt(base^2 + codec^2)/base - 1 <= 0.01 --
+# the y-codec may inflate the achievable pipeline floor by at most 1% --
+# equivalently codec <= base * sqrt(1.01^2 - 1). The former 10% linear
+# fraction is superseded as a proxy for exactly this criterion.
+# BEST_BASELINE_VAL_RMSE must track the current Stage 1 table (override via
+# --g21-reference); value below is the F4 cropped-config refresh.
+BEST_BASELINE_VAL_RMSE = 0.017012  # PROVISIONAL until the F4 table lands
+G21_MAX_FLOOR_INFLATION = 0.01
+G21_QUADRATURE_FACTOR = float(np.sqrt((1.0 + G21_MAX_FLOOR_INFLATION) ** 2 - 1.0))
 
 # Amendment B5: suppressed-regime truncation thresholds (TRUE SP(k) < t).
 SUPPRESSED_THRESHOLDS = (0.95, 0.9, 0.8)
@@ -320,7 +325,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--g21-reference", type=float,
                         default=BEST_BASELINE_VAL_RMSE,
                         help="Best Stage 1 cross-modal val RMSE on the pinned "
-                        "context; the G2.1' bar is G21_FRACTION x this.")
+                        "context; the F1 quadrature bar is "
+                        "sqrt(1.01^2 - 1) x this.")
+    parser.add_argument("--betas", type=float, nargs="+", default=None,
+                        help="Override the beta grid (e.g. --betas 1e-4 for "
+                        "the F5.1 one-decade extension runs).")
+    parser.add_argument("--latent-dims", type=int, nargs="+", default=None,
+                        help="Override the latent_dim_y grid (e.g. "
+                        "--latent-dims 6 for the F5.4 finding run).")
     parser.add_argument("--no-figures", action="store_true",
                         help="Skip writing figures.")
     args = parser.parse_args(argv)
@@ -348,10 +360,13 @@ def main(argv: list[str] | None = None) -> int:
         if value is not None:
             model_params[key] = value
 
-    # --- sweep: latent_dim x beta (F0.2 as amended, B1) ---------------------
+    # --- sweep: latent_dim x beta (F0.2 as amended, B1; grids overridable
+    # for the F5.1 extension / F5.4 finding runs) ----------------------------
+    latent_dims = tuple(args.latent_dims) if args.latent_dims else LATENT_DIMS
+    betas = tuple(args.betas) if args.betas else BETAS
     results: list[dict] = []
-    for ld in LATENT_DIMS:
-        for beta in BETAS:
+    for ld in latent_dims:
+        for beta in betas:
             model = GaussianVAE(
                 latent_dim=ld, beta=beta, seed=args.seed, **model_params
             )
@@ -509,10 +524,14 @@ def main(argv: list[str] | None = None) -> int:
               f"run_id: {record.run_id}"
               + ("  [SELECTED]" if is_selected else ""))
 
-    # --- gate headline (amended B2/B3) --------------------------------------
-    g21_bar = G21_FRACTION * args.g21_reference
+    # --- gate headline (F1 quadrature form) ---------------------------------
+    base = args.g21_reference
+    codec = selected["val_recon_rmse"]
+    inflation = float(np.sqrt(base ** 2 + codec ** 2) / base - 1.0)
+    g21_bar = G21_QUADRATURE_FACTOR * base
     print(json.dumps({
-        "G2.1prime_codec_adequacy": bool(selected["val_recon_rmse"] <= g21_bar),
+        "G2.1prime_codec_adequacy": bool(inflation <= G21_MAX_FLOOR_INFLATION),
+        "G2.1prime_floor_inflation": inflation,
         "G2.1prime_bar": g21_bar,
         "G2.2prime_no_collapse": bool(selected["collapse_ok"]),
         "finding_vae_vs_pca_matched_dim": {

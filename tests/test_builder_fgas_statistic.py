@@ -157,3 +157,41 @@ def test_definition_stamp_and_realized_range_written(tmp_path):
             snapshot=74, redshift=0.47, source="synthetic", tag="t2",
             stamp_param_names=False, extra_meta={"suite": "sneaky"},
         )
+
+
+def test_two_tier_guard_censuses_outside_modelled_range(tmp_path):
+    # Amendment 4 (F3.1): an extreme confined to a bin OUTSIDE the modelled
+    # window warns and censuses instead of failing; the same input without a
+    # modelled window (whole grid modelled) hard-fails. Radii are
+    # [0.5, 2.0, 8.0]; make bin 2 (R=8) extreme by near-zeroing its stacked
+    # denominator, and model only R <= 4.
+    total, ionized = _healthy_profiles(seed=3)
+    total[2] = np.linspace(-1.0, 1.0, 3 * _N_HALOS).reshape(3, _N_HALOS)
+    _write_sim(tmp_path, 0, total, ionized)
+    sup = _write_suppression(tmp_path, 1)
+    kwargs = dict(
+        base_path_template=str(tmp_path / "SB35_{}" / "data") + "/",
+        suppression_path=sup,
+        snapshot=74,
+        sim_ids=[0],
+    )
+
+    with pytest.raises(ValueError, match="sanity range"):
+        build_fgas_spk_dataset(**kwargs)  # whole grid modelled -> tier-2 fail
+
+    with pytest.warns(UserWarning, match="outside the modelled radial window"):
+        dataset = build_fgas_spk_dataset(**kwargs, modelled_range=(0.0, 4.0))
+    # Within the window the values are healthy and the build succeeded.
+    lo, hi = DEFAULT_FGAS_SANITY_RANGE
+    assert (dataset.fgas[:, :, :2] >= lo).all()
+    assert (dataset.fgas[:, :, :2] <= hi).all()
+
+    # The census lands in __meta__ via the stamp.
+    stamp = fgas_meta_stamp(
+        dataset.fgas, DEFAULT_FGAS_SANITY_RANGE,
+        radii=dataset.radii_mpch, modelled_range=(0.0, 4.0),
+    )
+    census = stamp["fgas_outside_modelled_census"]
+    assert list(census) == ["8"]
+    assert census["8"]["n_outside_sanity"] > 0
+    assert stamp["fgas_modelled_range"] == [0.0, 4.0]

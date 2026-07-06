@@ -33,6 +33,7 @@ Notes:
 from __future__ import annotations
 
 import re
+import warnings
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -81,22 +82,33 @@ DEFAULT_FGAS_SANITY_RANGE = (-1.0, 3.0)
 
 
 def fgas_meta_stamp(
-    fgas: np.ndarray, sanity_range: tuple[float, float]
+    fgas: np.ndarray,
+    sanity_range: tuple[float, float],
+    radii: np.ndarray | None = None,
+    modelled_range: tuple[float, float] | None = None,
 ) -> dict:
     """Return the additive ``__meta__`` stamp for a built f_gas array (E2.1/E2.2).
 
     Args:
         fgas (np.ndarray): The built array, shape (n_sims, n_nd, n_radii).
         sanity_range (tuple[float, float]): The build's validated range.
+        radii (np.ndarray | None): Radial grid, shape (n_radii,), in native
+            units; required for the amendment-4 out-of-modelled-range census.
+        modelled_range (tuple[float, float] | None): The two-tier guard's
+            modelled radial window (F3.1). When given (with ``radii``), the
+            stamp additionally records ``fgas_modelled_range`` and a per-bin
+            ``fgas_outside_modelled_census`` (count outside the sanity range,
+            min, max) for every bin outside the window.
 
     Returns:
         dict: ``fgas_definition`` (the statistic, verbatim),
-            ``fgas_sanity_range``, and ``fgas_realized_range_per_bin`` with
-            per-radial-bin ``min`` / ``max`` lists, so every build documents
-            its own realized range.
+            ``fgas_sanity_range``, ``fgas_realized_range_per_bin`` with
+            per-radial-bin ``min`` / ``max`` lists, and -- with a modelled
+            range -- the outside-window census, so every build documents its
+            own realized range.
     """
     fgas = np.asarray(fgas)
-    return {
+    stamp = {
         "fgas_definition": FGAS_DEFINITION,
         "fgas_sanity_range": [float(sanity_range[0]), float(sanity_range[1])],
         "fgas_realized_range_per_bin": {
@@ -104,6 +116,27 @@ def fgas_meta_stamp(
             "max": [float(v) for v in fgas.max(axis=(0, 1))],
         },
     }
+    if modelled_range is not None and radii is not None:
+        radii = np.asarray(radii, dtype=float)
+        lo, hi = float(sanity_range[0]), float(sanity_range[1])
+        outside = ~(
+            (radii >= float(modelled_range[0]))
+            & (radii <= float(modelled_range[1]))
+        )
+        stamp["fgas_modelled_range"] = [
+            float(modelled_range[0]), float(modelled_range[1]),
+        ]
+        stamp["fgas_outside_modelled_census"] = {
+            f"{radii[j]:g}": {
+                "n_outside_sanity": int(
+                    ((fgas[:, :, j] < lo) | (fgas[:, :, j] > hi)).sum()
+                ),
+                "min": float(fgas[:, :, j].min()),
+                "max": float(fgas[:, :, j].max()),
+            }
+            for j in np.nonzero(outside)[0]
+        }
+    return stamp
 
 
 def _load_one_simulation(
@@ -257,6 +290,7 @@ def build_fgas_spk_dataset(
     rank_key: str = "halo_mass",
     params_path: str | Path | None = None,
     fgas_sanity_range: tuple[float, float] = DEFAULT_FGAS_SANITY_RANGE,
+    modelled_range: tuple[float, float] | None = None,
     progress: Callable[[int, int], None] | None = None,
 ) -> FgasSpkDataset:
     """Assemble the full f_gas(R) to SP(k) dataset across all simulations.
@@ -301,9 +335,17 @@ def build_fgas_spk_dataset(
         rank_key (str, optional): Halo-ordering key for the number-density cut.
             Defaults to ``'halo_mass'`` (M_500c).
         fgas_sanity_range (tuple[float, float], optional): Inclusive build-time
-            validation range for every stacked f_gas value; any violation (or
-            any non-finite value) hard-fails the build. Defaults to
+            validation range (see the two-tier guard below). Defaults to
             :data:`DEFAULT_FGAS_SANITY_RANGE` ([-1.0, 3.0], provisional).
+        modelled_range (tuple[float, float], optional): Amendment-4 (F3.1)
+            two-tier guard window, in the radial grid's native units
+            (comoving Mpc/h). Non-finite values hard-fail anywhere; values
+            outside ``fgas_sanity_range`` hard-fail **within** this window
+            but only census-and-warn outside it (the outermost bins are
+            intrinsically ill-conditioned -- stacked ``Delta Sigma_total``
+            decays toward zero -- and are outside the modelling scope).
+            ``None`` treats the whole grid as modelled (the pre-amendment
+            behaviour). Defaults to None.
         progress (Callable, optional): Callback ``progress(i, n_total)`` invoked
             per simulation, for a progress bar. Defaults to None.
 
@@ -387,25 +429,54 @@ def build_fgas_spk_dataset(
             f"{suppression.shape[0]} vs {len(kept_ids)}."
         )
 
-    # E2.1 build-time validation: a single non-finite or out-of-range stacked
-    # f_gas value fails the whole build, loudly and with coordinates -- the
-    # Stage 3.0 corruption must never ship silently again.
+    # Two-tier build-time validation (E2.1 as redesigned by amendment 4,
+    # F3.1): non-finite values hard-fail anywhere; out-of-sanity-range values
+    # hard-fail within the modelled radial window and census-and-warn outside
+    # it. The Stage 3.0 corruption must never ship silently again.
     fgas_all = np.stack(fgas_rows)                    # (n_sims, n_nd, n_radii)
-    bad = ~np.isfinite(fgas_all)
     lo, hi = float(fgas_sanity_range[0]), float(fgas_sanity_range[1])
-    bad |= (fgas_all < lo) | (fgas_all > hi)
-    if bad.any():
-        sim_i, nd_i, bin_i = np.nonzero(bad)
-        listing = ", ".join(
+    radii_arr = np.asarray(radii_ref, dtype=float)
+
+    def _listing(mask: np.ndarray) -> str:
+        sim_i, nd_i, bin_i = np.nonzero(mask)
+        head = ", ".join(
             f"(sim {kept_ids[s]}, nd {n}, bin {b}: {fgas_all[s, n, b]:.6g})"
             for s, n, b in list(zip(sim_i, nd_i, bin_i))[:10]
         )
+        return head + (" ..." if mask.sum() > 10 else "")
+
+    nonfinite = ~np.isfinite(fgas_all)
+    if nonfinite.any():
         raise ValueError(
-            f"Built f_gas violates the sanity range [{lo}, {hi}] or is "
-            f"non-finite in {int(bad.sum())} cell(s): {listing}"
-            + (" ..." if bad.sum() > 10 else "")
-            + ". The build is rejected (E2.1); inspect the source profiles or "
-            "adjust fgas_sanity_range deliberately."
+            f"Built f_gas is non-finite in {int(nonfinite.sum())} cell(s): "
+            f"{_listing(nonfinite)}. The build is rejected (F3.1 tier 1)."
+        )
+
+    if modelled_range is not None:
+        in_model = (radii_arr >= float(modelled_range[0])) & (
+            radii_arr <= float(modelled_range[1])
+        )
+    else:
+        in_model = np.ones(radii_arr.shape[0], dtype=bool)
+    out_of_range = (fgas_all < lo) | (fgas_all > hi)
+
+    bad = out_of_range & in_model[None, None, :]
+    if bad.any():
+        raise ValueError(
+            f"Built f_gas violates the sanity range [{lo}, {hi}] within the "
+            f"modelled radial window in {int(bad.sum())} cell(s): "
+            f"{_listing(bad)}. The build is rejected (F3.1 tier 2); inspect "
+            "the source profiles or adjust fgas_sanity_range deliberately."
+        )
+
+    outside = out_of_range & ~in_model[None, None, :]
+    if outside.any():
+        warnings.warn(
+            f"{int(outside.sum())} f_gas cell(s) outside the modelled radial "
+            f"window exceed [{lo}, {hi}] (worst: {fgas_all[outside].min():.4g}"
+            f" .. {fgas_all[outside].max():.4g}). Censused, not failed "
+            "(F3.1); see fgas_outside_modelled_census in the saved __meta__.",
+            stacklevel=2,
         )
 
     return FgasSpkDataset(

@@ -1,5 +1,14 @@
 # Known issues (out of scope for the dual-VAE line of work)
 
+- **Tag 20260706's stamped guard range is the escape-hatch value (F3.2
+  ledger note).** That build's `__meta__` records `fgas_sanity_range`
+  (-15, 130): the documented one-off widening from the Branch-A rebuild,
+  applied before the amendment-4 two-tier guard existed. The dataset is NOT
+  rebuilt for the guard redesign (the guard changes no computed values; a
+  rebuild would be bitwise-identical fgas under a new tag). Two-tier
+  semantics — hard-fail within the modelled radial window, census-and-warn
+  outside it — apply from the next build onward.
+
 - **Stale dataset variants under the superseded f_gas statistic.** The
   Branch-A rebuild (2026-07-06) corrected the gas-fraction statistic to
   ratio-of-stacked-profiles and produced tag `20260706` for the pinned

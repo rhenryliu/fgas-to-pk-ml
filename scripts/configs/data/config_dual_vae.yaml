@@ -25,7 +25,12 @@ sim_ids: null
 
 # --- Inputs / features ---
 number_density_indices: [2]    # single number density; one row per simulation
-radial_range_mpch: null        # full radial range
+# Amendment 4, F2 (maintainer physics ruling): modelled radial scope cropped
+# to R < 10 comoving Mpc/h (load-time crop; the stored grid keeps all 20
+# bins). Retains the 16 bins 0.1..9.364; excludes 11.32/13.685/16.544/20.0,
+# where the stacked Delta Sigma_total denominator legitimately decays toward
+# zero. The boundary value 10 is preliminary and maintainer-owned.
+radial_range_mpch: [0.0, 10.0]
 include_nd_feature: false      # nd is constant across rows here; no X_cond
 include_mean_halo_mass: false
 include_camels_params: true    # 5 cosmological params -> X_params (decision F0.4)
