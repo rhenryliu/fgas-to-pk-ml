@@ -889,3 +889,55 @@ H4. **Ladder proceeds on the selected codec:** rungs 1-3 and gates G4.1 /
 H5. **Housekeeping.** Spec C1 floor excised (pointer above); Stage 3 gate
     report updated supersede-and-append (the FAIL stands as history); no
     expectations about probe outcomes encoded anywhere.
+
+---
+---
+
+# Maintainer amendment 6 (2026-07-06): G4.0b resolution — dual-track ladder
+
+Recorded verbatim; resolves the Stage 4.0 STOP. The tripwire is resolved by
+running the full Stage 4 ladder on BOTH codec arms and deciding the primary
+configuration by a criterion fixed here, before the ladder numbers exist: the
+probe metric that fired the tripwire is a single global y-space RMSE, and the
+project's own history (the pca_linear suppressed-regime lesson) forbids
+letting a single global number decide a model choice; symmetrically, the F-1
+nonlinear-probe result forbids ignoring the deficit. G4.0b's role is served;
+no further codec gates are added.
+
+I1. **Immediate:** suppressed-regime breakdown (TRUE SP(k) < t, t in
+    {0.95, 0.9, 0.8}, truth-masked, with per-threshold N) of the Stage 4.0
+    ceiling, pca_scores_d4, and selected-VAE arms, appended to the Stage 4.0
+    gate report. Context for the record; the I3 criterion, not this table,
+    decides the primary.
+I2. **Dual-track Stage 4.** Arm V: codec_x = vae (ld=3, beta=0.01, the H3.4
+    selection). Arm P: codec_x = pca, d = 4. Both consume the frozen VAE-Y
+    (ld=3, beta=1e-4). Full ladder per arm (rungs 1-3, identical folds/
+    seeds/protocols); G4.1 two-armed, G4.2 and G4.3 per arm (PCA score norms
+    serve the ||mu1|| role for Arm P). Mappings re-fit per arm on its own
+    code space; nothing reused across arms.
+I3. **Primary criterion (fixed now, applied after).** On val rung-3: Arm X
+    is primary if at least as good as the other on ALL of — global RMSE;
+    suppressed-regime RMSE at every threshold with N >= 30; pooled-coverage
+    distance from nominal at both 68% and 95%. Seed-level ties count as "at
+    least as good". Neither dominates -> STOP per GR5 with the two-armed
+    table (maintainer scientific choice). The non-primary arm is retained as
+    a first-class ablation arm.
+I4. **Test declaration (B9), fixed now:** the test batch is Arm V rung-3,
+    Arm P rung-3, and (pca, pca). Primary designation on val evidence BEFORE
+    any test number is seen; test reports, never re-designates. Stage 5 runs
+    the primary through scripts/run.py; Stage 5b's mandatory arms are the
+    other two declared configurations (a test-set evaluation and write-up,
+    not a re-fit); 5b fairness and full-metric reporting stand. The Stage 5
+    comparison note gains a required paragraph on the H3.6 architecture-cost
+    finding (two-stage ceiling vs direct mlp_regressor, 1.88x at the probe;
+    report the ladder's own version), framed as the measured price of the
+    probabilistic low-dimensional design; no softening of the number.
+I5. **Parked:** the noise-head interpretation of F-1 is recorded as a
+    testable hypothesis, explicitly NOT pursued here (no new VAE-X
+    objectives/losses/preprocessing). Stage 6, if it runs, runs on Arm V
+    regardless of primary, tests whether the F-1 deficit is
+    objective-induced and recoverable under task supervision, and re-clears
+    G4.2 in full.
+I6. **Housekeeping:** Stage 4.0 report supersede-and-append (the STOP stands
+    as history); no expectations about I1, the ladders, or the I3 verdict
+    encoded anywhere.
