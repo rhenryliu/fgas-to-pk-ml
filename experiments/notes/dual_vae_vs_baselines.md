@@ -28,6 +28,7 @@ designated on val evidence before any test number existed.
 |---|---|---|---|---|---|
 | `mlp` | 0.01403 | 0.02166 | 0.02689 | 0.03391 | `20260706T185716Z__bcdaaee9__a4ba5aa` |
 | `mlp_regressor` | 0.01434 | 0.02258 | 0.02741 | 0.03153 | `20260706T185713Z__c62b6ed0__a4ba5aa` |
+| `vib_regressor` (accuracy only, see below) | 0.01489 | 0.02216 | 0.02748 | 0.03305 | `20260706T224755Z__e1ecad20__3fc7da0` |
 | **`dual_vae` primary (pca, vae)** | **0.03129** | 0.04990 | 0.06173 | 0.07661 | `20260706T215627Z__cfc56666__43ea387` |
 | `pca_linear` | 0.03242 | 0.04365 | 0.05285 | 0.07395 | `20260706T185703Z__a760845e__a4ba5aa` |
 | `dual_vae` (pca, pca) | 0.03486 | 0.05450 | 0.06720 | 0.08837 | `20260706T220238Z__6457b899__43ea387` |
@@ -35,10 +36,29 @@ designated on val evidence before any test number existed.
 
 The primary composite sits between the direct MLPs (2.2x better globally)
 and edges `pca_linear` globally while trailing it slightly in the suppressed
-regime. **CVAE comparison caveat:** the historical CVAE numbers predate the
-Branch-A definition change and the crop; per A3/E7.3 they are not comparable
-and are deliberately not tabulated. A CVAE re-run on the pinned context is
-the missing row, noted as a gap rather than filled from stale records.
+regime. **`vib_regressor` row restriction (amendment 7, J4.2):** the CVAE
+comparison row is the vib_regressor on the corrected pinned context
+(declared second test batch; per-curve median/p90/max 0.0083/0.0238/0.0600)
+and reports **point-accuracy metrics only** — no coverage or calibration
+entries, because its sampling spread carries no valid uncertainty semantics
+(the documented reason for its renaming from cvae). Historical CVAE numbers
+predate the Branch-A definition change and remain non-comparable (A3/E7.3).
+
+## Stage 6 outcome (amendment 7, J2): recoverable accuracy, unacceptable calibration
+
+`dual_vae_ft` (the two-phase fine-tune of Arm V; val-gate record
+`20260706T224653Z__cb248494__7270c4c`) answered the F-1 recoverability
+question decisively on val: RMSE **0.02262** — better than Arm P (0.0327)
+and the Stage 4.0 ceiling (0.0364) — so the VAE-X deficit **is
+objective-induced and recoverable under task supervision**. But pooled
+coverage collapsed to 0.540 / 0.792 (a 10.7 / 10.2 pp regression vs Arm V,
+far beyond the 3 pp materiality threshold; G4.2 fails outright) and the
+encoder blow-up mode returned (||mu1'|| max 20.0). Per the Stage 6 rule
+that a calibration regression is not a tolerable trade-off, `dual_vae_ft`
+was **not adopted and never touched test** (its J1 declaration was
+conditional on val gates). The published sentence: task supervision buys
+back the accuracy the reconstruction objective discards, and pays for it in
+calibration — the frozen-pipeline primary remains the recommended model.
 
 ## Calibration and probabilistic behaviour (test fold)
 
