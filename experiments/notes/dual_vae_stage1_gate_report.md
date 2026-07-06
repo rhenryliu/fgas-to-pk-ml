@@ -1,4 +1,44 @@
-# Dual-VAE Stage 1 gate report — re-run on tag 20260706 (Branch A, corrected f_gas statistic)
+# Dual-VAE Stage 1 gate report — tag 20260706, R < 10 Mpc/h crop (amendment 4)
+
+Fourth regeneration, per F4. Same tag and statistic as the previous section;
+modelled scope cropped to R < 10 Mpc/h (F2 maintainer physics ruling; units
+verified from the sidecar `units` block: comoving Mpc/h). 16 of 20 radial
+bins retained (0.1 .. 9.364). F3.3 pre-training census on the retained
+nd-2 slice: **PASS** — span [0.041, 1.250] against the provisional sanity
+range [-1, 3], zero violations (all previous extremes, incl. the [-1.32,
+4.70] pair, sat in the excluded R > 10 bins).
+
+## Gate G1 (cropped) — PASS
+
+- **G1.1**: `pca_x_recon` `20260706T185651Z__4b5b02ea__a4ba5aa`,
+  `pca_y_recon` `20260706T185652Z__b2db7ddd__a4ba5aa`; bitwise-reproducible
+  re-invocation (`...185655Z` pair). PCA-on-X (cropped): 0.0521 (n=1) ->
+  0.0122 (n=10). PCA-on-Y bitwise-unchanged (y untouched by the crop).
+- **G1.2**: table regenerated (three superseded tables kept, keyed by tag and
+  radial range). Val RMSE: `mlp_regressor` **0.019378**
+  (`20260706T185713Z__c62b6ed0__a4ba5aa`, now the best cross-modal baseline),
+  `mlp` 0.019910 (`20260706T185716Z__bcdaaee9__a4ba5aa`), `pca_linear`
+  0.038537 (`20260706T185703Z__a760845e__a4ba5aa`). The crop slightly
+  *helped* mlp_regressor (0.0204 -> 0.0194) and slightly *hurt* the plain mlp
+  (0.0170 -> 0.0199) — the excluded outer bins evidently carried some usable
+  signal for the unbottlenecked model; reported as found (F7.3).
+
+**Runtime-relative references (this table):** F1 quadrature G2.1' bar =
+sqrt(1.01^2 - 1) x 0.019378 = **0.002747**; G3.1' C1 floor = `pca_linear` =
+**0.038537**.
+
+## F4.2 — map-nonlinearity finding (cropped; THE citable version)
+
+Holds on the modelled scope: `mlp_regressor` beats `pca_linear` by 2.0x
+globally (0.0194 vs 0.0385) and in deep suppression (0.0542 vs 0.1072 at
+SP<0.8). Predicted-range widths: pca_linear 0.67 of true, mlp_regressor 0.77,
+mlp 0.73 — genuine but moderate linear under-coverage, consistent with the
+uncropped E4.2 finding. Scatter:
+`figures/2026-07/07-06/stage1_baselines__20260706__e42_pred_vs_true_val.png`.
+
+---
+
+# [SUPERSEDED — full radial grid, pre-crop] Stage 1 gate report — tag 20260706 (Branch A, corrected f_gas statistic)
 
 Third regeneration, per amendment 3 (E4). Tag `20260706` carries the
 ratio-of-stacked-profiles f_gas (definition stamped in `__meta__`); E3.2
