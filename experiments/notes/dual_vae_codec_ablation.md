@@ -44,8 +44,19 @@ the test fold exactly once (`dual_vae_test_declaration.md`).
    everywhere); no arm reproduces the historical CVAE under-coverage.
 4. **OOD:** the PCA x-codes are norm-bounded on test; Arm V's VAE codes
    reach 15.8 (attenuated echo of the CVAE precedent) without creating
-   unique worst-curves — the shared hard sims (598, 977, 305) fail in every
-   arm and are physics-hard, not codec-induced.
+   unique worst-curves. The shared hard sims (598, 977, 305) fail in every
+   arm; **V2 evidence check:** they are NOT parameter-corner outliers (598
+   and 977 carry a single mildly extreme parameter each; 305 several), but
+   they ARE the suite's most deeply suppressed targets — min SP(k) of
+   0.438 / 0.620 / 0.545, depth percentiles 0.1 / 3.1 / 1.4 of 1024. The
+   correct label is therefore "the sparse deep-suppression tail of the
+   target distribution, hard in every arm", not codec-induced and not an
+   unevidenced "physics-hard".
+5. **Tail coverage (V3):** all three arms under-cover consistently at 95%
+   (0.920 / 0.934 / 0.934, i.e. ~2-3 pp low) while being near-nominal at
+   68% — the signature of slightly light tails, plausibly from the
+   diagonal-covariance MDN mixtures; observed and noted, no fix in this
+   programme.
 
 **G5b: PASS** — report complete; both mandatory arms evaluated under
 identical conditions. The comparison IS the deliverable; no accuracy

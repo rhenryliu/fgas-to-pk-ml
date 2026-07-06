@@ -76,8 +76,14 @@ FGAS_DEFINITION = (
     "R >~ 0.7 Mpc/h (see experiments/notes/dual_vae_stage3_forensics.md)."
 )
 
-# Build-time sanity range for the stacked f_gas (E2.1). PROVISIONAL, maintainer
-# to confirm; a build producing any value outside this range hard-fails.
+# Build-time sanity range for the stacked f_gas within the modelled radial
+# window (two-tier guard, F3.1). CONFIRMED as the production default by
+# maintainer ruling (amendment 7, J5): the guard's job is catching
+# catastrophic regressions of the builder-defect class, not distributional
+# policing -- the per-build realized-range __meta__ stamp does the
+# fine-grained work (current retained-slice census: [0.041, 1.25]). Revisit
+# trigger: a census of other variants (snap82, other ranks / number
+# densities) showing legitimate values approaching these bounds.
 DEFAULT_FGAS_SANITY_RANGE = (-1.0, 3.0)
 
 

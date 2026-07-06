@@ -47,8 +47,11 @@ NEW_TAG, REF_TAG = "20260706", "20260702"
 # Delta Sigma_total legitimately becomes small at the outermost radii, a mild
 # physically-driven tail, not the per-halo singularity the guard exists to
 # catch (the old corruption reached +-8540 across 992 cells at all radii).
-# The pinned nd-index-2 slice spans [-1.32, 4.70]. FLAGGED FOR MAINTAINER
-# CONFIRMATION; the realized per-bin range is stamped into __meta__ either way.
+# The pinned nd-index-2 slice spans [-1.32, 4.70]; the realized per-bin range
+# is stamped into __meta__ either way. RESOLVED (amendment 7, J5): [-1, 3] is
+# confirmed as the production default WITHIN the modelled radial window under
+# the later two-tier guard; this build's whole-grid widening predates that
+# guard and stands as the recorded escape hatch for tag 20260706.
 BUILD_SANITY_RANGE = (-15.0, 130.0)
 
 # E3.2: arrays that must be bitwise-identical to the reference tag.

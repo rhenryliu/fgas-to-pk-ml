@@ -65,7 +65,15 @@ without softening: at the Stage 4.0 probe, the unrestricted two-stage
 pathway (full profile -> MLP -> mu2 -> frozen decoder-Y) is **1.88x** worse
 than direct `mlp_regressor`; the ladder's own version — Arm P rung-2 vs
 `mlp_regressor` on val — is **1.67x** (0.03245 vs 0.019378), and the primary
-rung-3 on test is **2.18x** `mlp_regressor` (0.03129 vs 0.01434). Routing
+rung-3 on test is **2.18x** `mlp_regressor` (0.03129 vs `mlp_regressor`'s
+test RMSE **0.01434**, run `20260706T185713Z__c62b6ed0__a4ba5aa`; same tag,
+same crop, same pinned-split test fold — verified same-fold provenance, V1).
+The val-to-test asymmetry behind the ratio widening (1.69x on val -> 2.18x
+on test) is real, not a mixed-fold artifact: `mlp_regressor` improves 26%
+from val to test (0.0194 -> 0.0143) while the primary improves only 4%
+(0.0327 -> 0.0313) — the test fold happens to be easier for the direct
+regressor; fold-difficulty variance of this size is consistent with the
+~100-sim val fold. Routing
 through a 3-dimensional y-manifold with a z-space objective costs roughly a
 factor of two in raw accuracy on this data. The architecture's contribution
 is what the direct regressors do not provide: a calibrated predictive

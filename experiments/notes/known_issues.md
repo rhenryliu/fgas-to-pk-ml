@@ -1,5 +1,13 @@
 # Known issues (out of scope for the dual-VAE line of work)
 
+- **Production `fgas_sanity_range` ruling (amendment 7, J5, 2026-07-06):**
+  [-1.0, 3.0] is CONFIRMED as the production default within the modelled
+  radial window. Rationale: the guard catches catastrophic builder-defect-
+  class regressions, not distributional policing; the per-build realized-
+  range `__meta__` stamp does the fine-grained work (retained-slice census
+  [0.041, 1.25] sits well inside). Revisit trigger: a census of other
+  variants (snap82, other ranks/nd) showing legitimate values approaching
+  the bounds. No census of other variants required now.
 - **Tag 20260706's stamped guard range is the escape-hatch value (F3.2
   ledger note).** That build's `__meta__` records `fgas_sanity_range`
   (-15, 130): the documented one-off widening from the Branch-A rebuild,
