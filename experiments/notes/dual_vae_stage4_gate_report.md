@@ -1,4 +1,35 @@
-# Dual-VAE Stage 4.0 gate report — G4.0a PASS, G4.0b STOP (ratio 1.66 > 1.25)
+# Stage 4.0 resolution (amendment 6, 2026-07-06): dual-track ladder
+
+The maintainer resolved the G4.0b STOP (which stands below as recorded
+history) with a dual-track Stage 4: Arm V (codec_x = vae, ld=3, beta=0.01)
+and Arm P (codec_x = pca, d=4), full ladder each, primary designation by the
+I3 criterion fixed **before** the ladder numbers exist (val rung-3 dominance
+on global RMSE + suppressed-regime RMSE at all N >= 30 thresholds + pooled
+coverage distance at 68%/95%; split verdict -> STOP). The B9 test batch is
+declared as Arm V rung-3, Arm P rung-3, and (pca, pca).
+
+## I1 — suppressed-regime breakdown of the probe arms (context, not a gate)
+
+Deterministic refit of the three arms under the identical protocol
+(`scripts/stage4_0_i1_breakdown.py`); every recomputed global mean matches
+the recorded value exactly. Val y-space RMSE, truth-masked:
+
+| arm | global | SP<0.95 (n=1240) | SP<0.9 (n=671) | SP<0.8 (n=234) |
+|---|---|---|---|---|
+| ceiling (full profile) | 0.03635 | 0.05660 | 0.07273 | 0.10181 |
+| pca_scores_d4 | 0.03229 | 0.04949 | 0.06360 | **0.07971** |
+| selected VAE (ld=3, b=0.01) | 0.05349 | 0.08795 | 0.11461 | 0.17432 |
+
+The probe-level picture is uniform across regimes: pca_scores_d4 leads the
+VAE arm at every threshold (2.2x at SP<0.8) and — notably — beats the
+unrestricted ceiling in the deep-suppression regime (0.0797 vs 0.1018),
+suggesting the whitened 4-dim compression acts as a useful regularizer for
+the probe in the tail. Recorded as context; the I3 criterion decides the
+primary from the ladder, not from this table.
+
+---
+
+# [historical STOP record — resolved by amendment 6] Dual-VAE Stage 4.0 gate report — G4.0a PASS, G4.0b STOP (ratio 1.66 > 1.25)
 
 Amendment-5 probe protocol (H3), recorded run
 `20260706T205815Z__e90f52b8__a6dab80` (implementation commit `a6dab80`

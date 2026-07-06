@@ -227,8 +227,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--config-data", default=DEFAULT_DATA_CONFIG)
     parser.add_argument("--scratch-root", default=None)
-    parser.add_argument("--vae-x-run-id", required=True,
-                        help="Stage 3 selected vae_fgas run id (frozen).")
+    parser.add_argument("--codec-x", choices=("vae", "pca"), default="vae",
+                        help="Amendment-6 dual track: Arm V (vae) loads the "
+                        "frozen Stage 3 checkpoint; Arm P (pca) fits a "
+                        "train-fold PcaCodec at --pca-dim.")
+    parser.add_argument("--pca-dim", type=int, default=4,
+                        help="PCA codec dimension for --codec-x pca (Arm P).")
+    parser.add_argument("--vae-x-run-id", default=None,
+                        help="Stage 3 selected vae_fgas run id (frozen); "
+                        "required for --codec-x vae.")
     parser.add_argument("--vae-y-run-id", required=True,
                         help="Stage 2 selected vae_spk run id (frozen).")
     parser.add_argument("--seed", type=int, default=0)
@@ -254,10 +261,25 @@ def main(argv: list[str] | None = None) -> int:
     sim_va = td.sim_index[masks["val"]]
 
     models_root = Path(scratch_root) / "models"
-    vae_x = joblib.load(models_root / args.vae_x_run_id / "model.joblib")
     vae_y = joblib.load(models_root / args.vae_y_run_id / "model.joblib")
+    if args.codec_x == "vae":
+        if args.vae_x_run_id is None:
+            raise SystemExit("--vae-x-run-id is required for --codec-x vae")
+        vae_x = joblib.load(models_root / args.vae_x_run_id / "model.joblib")
+        arm = "V"
+        codec_x_desc = {"codec_x": "vae", "vae_x_run_id": args.vae_x_run_id}
+    else:
+        # Arm P: train-fold PCA codec (deterministic full SVD; the context is
+        # ignored by PcaCodec). The mapping is re-fit on this code space (I2.3).
+        from fgas_spk.models.dual_vae_components import PcaCodec
 
-    # Frozen posterior-mean pairs (F0.5).
+        vae_x = PcaCodec(latent_dim=args.pca_dim, seed=0)
+        vae_x.fit(np.asarray(x_tr, dtype=float))
+        arm = "P"
+        codec_x_desc = {"codec_x": "pca", "pca_dim": args.pca_dim}
+
+    # Frozen posterior-mean / code pairs (F0.5). For Arm P the code norms
+    # serve the ||mu1|| OOD role (I2.2).
     mu1_tr, mu1_va = vae_x.encode(x_tr, c_tr), vae_x.encode(x_va, c_va)
     mu2_tr = vae_y.encode(y_tr, c_tr)
     mu1_norms_va = np.linalg.norm(mu1_va, axis=1)
@@ -340,7 +362,8 @@ def main(argv: list[str] | None = None) -> int:
         "latent_map_mdn": {"n_components": MDN_K_DEFAULT, **map_params},
     }
     frozen = {
-        "vae_x_run_id": args.vae_x_run_id,
+        "arm": arm,
+        **codec_x_desc,
         "vae_y_run_id": args.vae_y_run_id,
     }
     for name, rung in rungs.items():
@@ -376,6 +399,7 @@ def main(argv: list[str] | None = None) -> int:
             summary["best_epoch"] = mdn_default.best_epoch
         ledger_metrics = {
             "stage": "dual_vae_stage4",
+            "arm": arm,
             "rung": name,
             "composite_val_rmse": res["val_rmse"],
         }
@@ -397,7 +421,7 @@ def main(argv: list[str] | None = None) -> int:
         ckpt_dir.mkdir(parents=True, exist_ok=True)
         joblib.dump(rung, ckpt_dir / "model.joblib")
 
-        label = _figure_label(record.run_id, name)
+        label = _figure_label(record.run_id, f"{name}_arm{arm}")
         if not args.no_figures:
             if name == "latent_map_mdn":
                 _write_coverage_figure(res["coverage"], np.asarray(td.k), label)
@@ -408,11 +432,11 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_table_append:
         lines = [
             "",
-            "## Stage 4 composite rungs (appended; tag 20260702, val fold)",
+            f"## Stage 4 composite rungs — Arm {arm} "
+            f"({codec_x_desc}) (appended; val fold)",
             "",
-            f"Frozen components: VAE-X `{args.vae_x_run_id}`, "
-            f"VAE-Y `{args.vae_y_run_id}`. Bottleneck cost (rung 2 vs "
-            f"`mlp_regressor` {MLP_REGRESSOR_VAL_RMSE}): "
+            f"Frozen y-codec: VAE-Y `{args.vae_y_run_id}`. Bottleneck cost "
+            f"(rung 2 vs `mlp_regressor` {MLP_REGRESSOR_VAL_RMSE}): "
             f"gap {bottleneck['gap']:+.5g} (ratio {bottleneck['ratio']:.3f}).",
             "",
             "| rung | run_id | val RMSE | val RMSE (SP<0.95) | val RMSE (SP<0.9) | val RMSE (SP<0.8) |",

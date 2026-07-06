@@ -30,6 +30,18 @@ diverging from task-relevant information; amendment 5 (H2) replaced the
 single B1 selection for VAE-X with a candidate set adjudicated by the
 Stage 4.0 probe.
 
+## Parked hypothesis (amendment 6, I5.1 — recorded, explicitly NOT pursued)
+
+The F-1 deficit survived the nonlinear probe (Stage 4.0: 1.41-1.82x at
+d >= 3), so a mechanism is worth recording: the per-bin Gaussian NLL with a
+learned ``obs_logvar`` may down-weight exactly the low-variance,
+feedback-carrying profile directions that PCA retains (whitened scores keep
+them; a reconstruction likelihood pays little for dropping them). **Testable,
+but out of scope for this line of work by maintainer ruling** — no new VAE-X
+objectives, losses, or preprocessing experiments. Stage 6, if it runs (on
+Arm V regardless of primary), tests the adjacent question: whether the
+deficit is objective-induced and recoverable under task supervision.
+
 ## H1.4 sanity note — the full-profile vs PCA-6 ridge inversion
 
 The full-16-bin ridge probe (0.0422) scoring worse than the 6-dim PCA-scores
