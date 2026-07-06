@@ -941,3 +941,85 @@ I5. **Parked:** the noise-head interpretation of F-1 is recorded as a
 I6. **Housekeeping:** Stage 4.0 report supersede-and-append (the STOP stands
     as history); no expectations about I1, the ladders, or the I3 verdict
     encoded anywhere.
+
+---
+---
+
+# Maintainer amendment 7 (2026-07-06): Stage 6 fine-tune, closing verifications, consolidated documentation
+
+Recorded verbatim (condensed to its operative content; the maintainer message
+is the authority). Intended as the FINAL amendment; completion of J7 is
+programme close-out.
+
+J1. **Second and final test declaration (B9), fixed now:** exactly two new
+    configurations — `dual_vae_ft` (Stage 6 fine-tuned Arm V, J2) and
+    `vib_regressor` on the corrected pinned context (the CVAE comparison
+    row, J4). Each evaluated on test exactly once, after its val-fold gates
+    clear. No other configuration touches test. Amendment-6 primary
+    designation unaffected regardless of outcomes.
+J2. **Stage 6 — end-to-end fine-tune of Arm V** (codec_x = vae ld=3
+    beta=0.01, regardless of primary). Question: is the F-1 deficit
+    objective-induced and recoverable under task supervision, or structural?
+    J2.1 two phases (maintainer design choice): Phase 1 initialize from Arm
+    V's frozen encoder-X + rung-2 MLP weights, fine-tune BOTH jointly with a
+    y-space Gaussian NLL through the frozen decoder-Y (ALL decoder-Y
+    parameters frozen incl. obs_logvar — y-manifold and noise semantics
+    preserved exactly); small lr, internal holdout, best-epoch restore,
+    G3.4 sanity. Phase 2 freeze the fine-tuned encoder; rebuild (mu1', mu2)
+    train-fold pairs; re-fit the MDN with the identical Stage 4 protocol and
+    K selection as Arm V. Rationale: isolates recoverability from density
+    estimation; calibration re-established through a standard MDN fit.
+    VAE-Y untouched in every respect. J2.2 registered as `dual_vae_ft`
+    (separate entry; one-process fit; `dual_vae` untouched as the
+    diagnosable baseline; config scripts/configs/run/dual_vae_ft.yaml).
+    J2.3 val gates BEFORE any test touch: G4.2 in full; calibration-
+    regression check vs Arm V (material regression -> STOP per the original
+    Stage 6 text); OOD ||mu1'|| vs the G3.3 reference; G4.3. J2.4
+    recoverability verdict (reported finding, no encoded expectation):
+    val global + suppressed RMSE vs Arm V, Arm P, the Stage 4.0 ceiling,
+    and mlp_regressor. J2.5 on gates passing: the single declared test
+    evaluation via scripts/run.py; results appended to the comparison and
+    ablation notes.
+J3. **Closing verifications (no new test touches):**
+    V1 the 2.18x architecture-cost ratio must state mlp_regressor's test
+    RMSE explicitly and confirm same-fold same-tag provenance; if the
+    val->test asymmetry (mlp_regressor ~26% improvement vs primary ~4%) is
+    real, one honest sentence; if a mixed-fold/transcription slip, correct.
+    V2 evidence the "physics-hard" claim for sims 305/598/977 against their
+    SB35 parameters; extreme feedback corners -> claim stands with evidence;
+    unremarkable -> relabel ("hard in every arm, cause unidentified").
+    V3 one ablation-note sentence on the consistent ~3 pp under-coverage at
+    95% (0.920/0.934/0.934), likely mechanism diagonal-MDN light tails;
+    observed, not fixed here.
+J4. **CVAE comparison row (scoped):** vib_regressor via scripts/run.py on
+    the pinned context (existing run config; pinned split already);
+    point-accuracy metrics ONLY in the note (global, suppressed, per-curve)
+    — explicitly NO coverage/calibration entries (its sampling spread
+    carries no valid uncertainty semantics; the documented reason for the
+    renaming from cvae). Resolves the Stage 5 note's "honest gap".
+J5. **Production fgas_sanity_range ruling:** [-1.0, 3.0] confirmed as the
+    production default. Rationale: the guard catches catastrophic
+    builder-defect-class regressions, not distributional policing — the
+    realized-range stamp does the fine-grained work (retained-slice census
+    [0.041, 1.25] sits well inside). Revisit trigger: a census of other
+    variants (snap82, other ranks/nd) showing legitimate values approaching
+    the bounds. Recorded in the builder docstring, the config comment, and
+    the ledger. No census of other variants now.
+J6. **Documentation deliverable `docs/dual_vae_doc.md`** — written LAST,
+    self-contained and independent of this spec (may cite it once as
+    provenance), maintainer-as-end-user audience, plain Canadian English.
+    Required structure: executive summary (headline test table, honest
+    framing); runnable quickstart demos (run.py commands, checkpoint
+    loading with predict/predict_samples/latents/latents_y/obs_sigma and
+    the F0.5 caveat, codec switching, re-running every stage script and
+    gate, dataset rebuild + guard behaviour); architecture; data (statistic,
+    defect summary, stamp, tag history, crop, guard); metrics and directory
+    map; the seven-amendment decision log with the scientific findings
+    inline; known limitations and deferred work; file map. Accuracy
+    discipline: every number carries its run_id (or points to the note that
+    does), drafted from committed records, superseded numbers marked, open
+    items stated plainly.
+J7. **Close-out:** this amendment appended verbatim (J7.1); final ledger
+    note (programme closed; stages 1-6 complete; open items carried forward
+    with pointers) (J7.2); final commits per GR8 (J7.3). After J7, stop; any
+    further work is a new programme, not an amendment.
