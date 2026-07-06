@@ -98,3 +98,36 @@ guarded/trimmed variant needs a maintainer-specified rule. Per 3.0.6 this
 stops here for the maintainer's Branch decision.
 
 STOPPED per 3.0.6. No Stage 3 resumption, no Stage 4, no builder edit.
+
+---
+
+## Resolution addendum (Branch A, 2026-07-06)
+
+- **Verdict accepted by the maintainer: corruption**, located in this repo's
+  builder statistic. **Definition ruling (rule 3, maintainer):** ratio of
+  stacked profiles — the established convention of the measurements paper and
+  data-side pipeline; verified against the reference notebook before
+  implementation (cells 7/16: per-modality stacks over concatenated halos x
+  projections, one division, "Ratio-of-means normalised by the cosmic baryon
+  fraction").
+- **Fix:** commit `e3b55e6` (`build_fgas_spk_dataset` ratio-of-stacks,
+  E2.1 hard-fail sanity guard, `fgas_definition` + realized-range `__meta__`
+  stamps, regression tests). **Rebuild:** tag `20260706`
+  (`scripts/rebuild_dataset_20260706.py`); E3.2 identity assertions passed —
+  only `fgas`/`fgas_std` changed vs 20260702.
+- **Guard range flagged:** the provisional default [-1, 3] hard-failed the
+  first rebuild on 22 cells (0.02%), all R >= 9.4 Mpc/h, mostly nd 0/1 sparse
+  stacks (stacked Delta Sigma_total legitimately small at the outermost
+  radii; worst 117.8 at nd 1, R = 20; pinned nd-2 slice spans [-1.32, 4.70]).
+  The build ran with a deliberately widened (-15, 130); **maintainer
+  confirmation of the production range is pending.**
+- The upstream (lindajin) offender report is **no longer needed**: the source
+  profiles were healthy; the defect was local to this repo's builder.
+- E7.2: the 3.0.5 diagnostic (mlp 0.0403 with exclusions, old statistic)
+  predicted nothing about the clean baselines — the actual clean-data mlp is
+  0.0170, far beyond what exclusion-cleaning suggested. It is cited nowhere
+  as an expectation.
+- E7.3: all pre-20260706 X-dependent results are superseded **by definition
+  change**, not merely by tag; the `fgas_definition` `__meta__` stamp is the
+  discriminator (absent = old statistic; see also the stale-variant warning
+  in `known_issues.md`).
