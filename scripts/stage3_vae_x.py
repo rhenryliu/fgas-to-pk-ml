@@ -84,6 +84,12 @@ STAGE1_PCA_X_RUN_ID = "20260705T221711Z__b05fb53d__760d8d6"
 # G3.1' guardrail: VAE-X arm <= this factor x PCA-x-scores arm (B6).
 G31_GUARDRAIL = 1.05
 
+# Amendment 2, C1 (anti-vacuous-pass floor): the ratio test is valid only if
+# the PCA-x-scores arm's val y-space RMSE clears the Stage 1 `pca_linear`
+# baseline on the same tag and folds (run 20260705T221739Z__c9583454__760d8d6).
+# A mutual-failure ratio of ~1 must never pass again.
+G31_FLOOR_PCA_LINEAR_VAL_RMSE = 0.061429
+
 
 def ood_reference_stats(mu: np.ndarray) -> dict:
     """G3.3 OOD reference statistics for a set of latent codes.
@@ -170,11 +176,15 @@ def downstream_adequacy(
             ),
         }
     ratio = arms["vae_arm"]["rmse"] / arms["pca_arm"]["rmse"]
+    # C1 floor: the reference arm must itself be a usable predictor.
+    floor_ok = arms["pca_arm"]["rmse"] <= G31_FLOOR_PCA_LINEAR_VAL_RMSE
     return {
         **arms,
         "ratio": float(ratio),
         "guardrail": G31_GUARDRAIL,
-        "pass": bool(ratio <= G31_GUARDRAIL),
+        "floor_reference_pca_linear": G31_FLOOR_PCA_LINEAR_VAL_RMSE,
+        "floor_ok": bool(floor_ok),
+        "pass": bool(floor_ok and ratio <= G31_GUARDRAIL),
     }
 
 
@@ -267,6 +277,10 @@ def main(argv: list[str] | None = None) -> int:
                 "collapse_ok": _collapse_ok(stats_tr["kl_per_dim"]),
                 "obs_sigma": [float(s) for s in model.obs_sigma()],
                 "best_epoch": model.best_epoch,
+                # Amendment 2, C2 (G3.4): an epoch-0 restore (or no internal
+                # holdout improvement at all) is an automatic failure for this
+                # configuration, whatever the other criteria say.
+                "sanity_ok": model.best_epoch not in (None, 0),
                 "adequacy": adequacy,
                 "ood_train": ood_reference_stats(stats_tr["mu"]),
                 "ood_val": ood_reference_stats(stats_va["mu"]),
@@ -282,12 +296,14 @@ def main(argv: list[str] | None = None) -> int:
                   f"pca {adequacy['pca_arm']['rmse']:.5g}) "
                   f"best_epoch={res['best_epoch']}")
 
-    # --- selection (B1): lowest val recon RMSE subject to no-collapse -------
-    eligible = [r for r in results if r["collapse_ok"]]
+    # --- selection (B1 + amendment 2 C2): lowest val recon RMSE subject to
+    # no-collapse AND the G3.4 training-sanity criterion.
+    eligible = [r for r in results if r["collapse_ok"] and r["sanity_ok"]]
     pool = eligible if eligible else results
     selected = min(pool, key=lambda r: r["val_recon_rmse"])
     print(f"selected latent_dim_x = {selected['latent_dim']}, "
-          f"beta = {selected['beta']} (collapse_ok={selected['collapse_ok']})")
+          f"beta = {selected['beta']} (collapse_ok={selected['collapse_ok']}, "
+          f"sanity_ok={selected['sanity_ok']})")
 
     # --- correlations of mu1 vs ALL 35 SB35 parameters (val fold) -----------
     full_config = dataclasses.replace(data_config, camels_param_names=None)
@@ -331,6 +347,7 @@ def main(argv: list[str] | None = None) -> int:
             "collapse_criterion": f"per-dim KL >= {COLLAPSE_KL_MIN} nats at "
                                   "best epoch, train fold (G3.2', B3)",
             "collapse_ok": res["collapse_ok"],
+            "g34_sanity_ok": res["sanity_ok"],
             "obs_sigma_raw_scale": res["obs_sigma"],
             "ood_reference": {"train": res["ood_train"], "val": res["ood_val"]},
             "best_epoch": res["best_epoch"],
@@ -385,8 +402,10 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps({
         "G3.1prime_downstream_adequacy": selected["adequacy"]["pass"],
         "G3.1prime_ratio": selected["adequacy"]["ratio"],
+        "G3.1prime_floor_ok": selected["adequacy"]["floor_ok"],
         "G3.2prime_no_collapse": bool(selected["collapse_ok"]),
         "G3.3_ood_stats_present": True,
+        "G3.4_training_sanity": bool(selected["sanity_ok"]),
         "finding_vae_vs_pca_x_recon": {
             "vae": selected["val_recon_rmse"],
             "pca": selected["pca_val_rmse_matched"],

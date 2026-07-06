@@ -1,4 +1,11 @@
 # Dual-VAE Stage 2 gate report — tag 20260702, amended gates: PASS
+> **Conditional status (amendment 2, C3, 2026-07-05):** G2.1' was evaluated
+> against a bar (10% of the best cross-modal baseline, `mlp` 0.042921) that is
+> **provisional pending the Stage 3.0 X-matrix forensics verdict** — every
+> new-tag number involving X is under audit, and the gate is re-evaluated in
+> Branch A if the data are corrected. The VAE-Y model itself and the
+> G2.2'/G2.3/G2.4 conclusions are unaffected (y is bitwise-identical across
+> tags and VAE-Y consumes y and params only).
 
 Re-run under the 2026-07-05 spec amendment (`docs/dual_vae_staged_spec.md`):
 tag `20260702`, beta swept per B1, gates G2.1'/G2.2' per B2/B3, posterior-mean
