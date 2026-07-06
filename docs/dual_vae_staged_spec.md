@@ -563,3 +563,138 @@ D3. Scientific framing guard, for every note and report from here on: the
     is linear (the map's genuine nonlinearity is established separately by the
     mlp-vs-pca_linear scatter behaviour). Do not let any summary sentence
     conflate the two.
+
+---
+---
+
+# Maintainer amendment 2 (2026-07-05): Stage 3.0 forensics + gate hardening
+
+This is the maintainer decision required by GR5 for the Stage 3 halt, recorded
+verbatim. **Do not amend F0.2, do not modify the VAE-X likelihood, and do not
+launch Stage 4.** All five options in the Stage 3 gate report are deferred:
+they treat the symptom while assuming the input data is legitimate, and that
+assumption is now the thing under test.
+
+Rationale, in brief. (a) f_gas is a fraction-like quantity; fitted per-bin
+obs_sigma up to 336 and per-example 50-300 sigma residuals describe values no
+gas-fraction profile can physically contain -- heavy projection-noise tails
+produce ~5-20 sigma outliers, not 300. (b) The A4 diff isolates the suspect:
+between tags, X was re-binned 17 -> 20 by a new upstream code path while y is
+bitwise-identical -- the one modality that exploded is the one a new code path
+produces, and this pipeline has precedent for upstream bugs (the halo-ordering
+correction in the builder). (c) The PCA arm of G3.1' failing equally (~0.073
+both arms) is diagnostic: PCA uses no likelihood, so "Gaussian NLL is
+too thin-tailed" cannot explain it, whereas a poisoned input matrix rotating
+the leading components explains both arms at once. (d) The discriminative/
+generative asymmetry (mlp fine, VAE-X diverging from epoch 1) is exactly the
+signature of bad rows a generative model must pay for in reconstruction NLL.
+Consequence: **every new-tag number involving X is provisional** -- including
+mlp's 0.0429 and therefore the G2.1' bar. Stage 2's VAE-Y results themselves
+are insulated (VAE-Y consumes y and params only).
+
+## Stage 3.0 — X-matrix forensics (new sub-stage; blocks Stage 3 resumption)
+
+All diagnostics run on the raw (pre-standardization) X as served by
+`load_training_data` under the pinned config, unless stated otherwise. One
+run-record-per-analysis is not required; a single recorded diagnostics run with
+a committed note is sufficient (GR8 applies).
+
+3.0.1 **Value census, both tags.** Per-radial-bin quantiles of X (min, 0.1%,
+      1%, 50%, 99%, 99.9%, max), plus counts of non-finite values and exact
+      zeros, on tag 20260702 AND tag 20260617. The grids differ, so compare
+      (i) the pooled value distribution across all bins and (ii) per-bin
+      profiles side by side. The question: did the value distribution change
+      character between tags, and where.
+
+3.0.2 **Offender census.** Flag cells (sim_index, nd, bin) by two tiers:
+      - hard-implausibility: value outside [-0.5, 2.0] -- a PROVISIONAL range;
+        confirm the f_gas definition (and hence the true physical bound) from
+        the dataset `__meta__` and builder documentation, state what you find,
+        and flag the range for maintainer confirmation in the report;
+      - distributional: robust per-bin z-score (median/MAD) with |z| > 10.
+      Classify the spatial pattern: a few isolated simulations (cf. the known
+      OOD precedent, sims 919/1000), a systematic outer-bin effect, or
+      scattered. Report which folds the offending simulations fall in.
+
+3.0.3 **PCA poisoning check.** Compare PCA-on-X leading components across tags:
+      loading profiles, explained-variance spectra, and whether any leading
+      component's scores are dominated by the offender rows from 3.0.2. A
+      component that "points at" a handful of rows confirms the mechanism that
+      voided G3.1'.
+
+3.0.4 **Rebinning code inspection.** Locate the upstream re-binning code path
+      that produced the 20-point grid (builder and/or the upstream
+      SimulationStacker products). If inspectable in-repo, look specifically
+      for empty-annulus / division-by-near-zero / sentinel-fill edge cases at
+      the flagged bins. If the code path is not accessible from this repo,
+      instead produce a compact offender report (sim ids, nd indices, radial
+      bins, values) formatted for an upstream bug report, as a committed
+      artifact.
+
+3.0.5 **Attribution of the mlp improvement (diagnostic only, not a recorded
+      baseline).** Recompute the mlp val RMSE with the 3.0.2 offender rows
+      excluded, same folds otherwise. Purpose: measure how much of the
+      0.0617 -> 0.0429 improvement survives cleaning, i.e. whether the "sharp
+      improvement on re-binned profiles" is real signal or an artifact of the
+      same pathology. Label the result diagnostic-only in the note.
+
+3.0.6 **Deliverable and STOP.** Commit
+      `experiments/notes/dual_vae_stage3_forensics.md` with the evidence and a
+      verdict: one of
+      - **corruption** (pathological values traceable to the re-binning or
+        another upstream defect),
+      - **genuine heavy tails** (values physically admissible under the
+        confirmed f_gas definition; distribution heavy-tailed by nature),
+      - **mixed / inconclusive**,
+      plus a recommended branch from Section B. Then STOP for maintainer
+      decision. Do not proceed down any branch autonomously -- Branch A in
+      particular involves upstream coordination and physics-adjacent exclusion
+      choices that are maintainer calls (CLAUDE.md rule 3).
+
+## B. Pre-specified branches (executed only after the maintainer's reply)
+
+B-A **Corruption.** Resolution is upstream fix (new data tag; maintainer
+    coordinates) or recorded exclusion (a `sim_ids` exclusion list and/or a
+    radial crop via `radial_range_mpch`, justified by data quality, with the
+    forensics note as provenance). Then: re-run Stage 1 on the corrected data
+    (third baseline-table regeneration, superseded headings as before),
+    re-evaluate G2.1' against the regenerated bar (no VAE-Y retrain needed
+    unless y changes -- it should not), and re-run the Stage 3 sweep. **No F0.2
+    amendment.**
+
+B-B **Genuine heavy tails.** Amend F0.2 for the X modality: primary fix is an
+    input transform (asinh with per-bin robust scaling) applied inside the
+    VAE-X preprocessing AND to the PCA-on-X diagnostics, since a transform
+    repairs both the likelihood and every PCA-based comparison arm; Student-t
+    likelihood is the fallback if the transform alone is insufficient. Record
+    in the amendment that the long-run robustness choice should be driven by
+    the real DESI+ACT+HSC f_gas noise properties, not CAMELS artifacts.
+
+B-C **Mixed.** Maintainer specifies the combination; do not guess.
+
+## C. Gate hardening (applies from now on, regardless of branch)
+
+C1 **G3.1' floor condition (anti-vacuous-pass).** The ratio test is valid only
+   if the reference arm clears an absolute floor: the PCA-x-scores ridge arm's
+   val y-space RMSE must be <= the Stage 1 `pca_linear` baseline val RMSE on
+   the same tag and folds. If the floor fails, G3.1' fails regardless of the
+   ratio -- a mutual-failure ratio of ~1 must never pass again.
+
+C2 **G3.4 (new, generic training-sanity gate).** Any selected model whose
+   best-epoch restore is epoch 0, or whose internal-holdout objective never
+   improves over initialization, is an automatic gate failure for that
+   configuration, whatever other criteria say.
+
+C3 **Stage 2 status marked conditional.** The Stage 2 gate report gains a note:
+   G2.1' was evaluated against a bar (best cross-modal baseline 0.00429) that
+   is provisional pending the Stage 3.0 verdict; the gate is re-evaluated in
+   Branch A. The VAE-Y model itself and the G2.2'/G2.3/G2.4 conclusions are
+   unaffected (y bitwise-identical across tags).
+
+## D. Housekeeping
+
+D1 Not launching Stage 4 on the epoch-0 codes was the correct call; Stage 4
+   remains parked exactly as committed (34166de) and untouched until an honest
+   VAE-X exists.
+D2 GR8 commit discipline continues; the forensics note commit is tagged
+   `[stage 3.0 verdict: <corruption|heavy-tails|mixed>]`.
