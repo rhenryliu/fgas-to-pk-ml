@@ -1,0 +1,47 @@
+# RunConfig for dual_vae_ft: the Stage 6 two-phase fine-tune of Arm V
+# (amendment 7, J2). Declared test configuration 4 (second batch; see
+# experiments/notes/dual_vae_test_declaration.md) -- its single test
+# evaluation runs ONLY after the val-fold gates clear
+# (scripts/stage6_finetune.py).
+#
+# Phase 1 fine-tunes encoder-X + the rung-2 MLP map jointly with a y-space
+# Gaussian NLL through the FROZEN decoder-Y (obs_logvar included); Phase 2
+# freezes the encoder and re-fits the MDN (K=3) on the (mu1', mu2) pairs.
+# All non-ft hyperparameters are Arm V's exactly.
+#
+#     python scripts/run.py --config-data scripts/configs/data/config_dual_vae.yaml \
+#                           --config-run  scripts/configs/run/dual_vae_ft.yaml
+
+model: dual_vae_ft            # registry name (fgas_spk.models.REGISTRY)
+model_params:
+  latent_dim_x: 3             # Arm V x-codec (vae, forced by the model)
+  latent_dim_y: 3
+  beta_x: 0.01
+  beta_y: 1.0e-4
+  hidden: 128
+  n_layers: 2
+  epochs: 5000
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  dropout: 0.0
+  batch_size: 128
+  anneal_epochs: null
+  val_frac: 0.1
+  mdn_components: 3
+  map_epochs: 2000
+  ft_epochs: 1000             # phase-1 joint fine-tune schedule
+  ft_lr: 1.0e-4               # small by design (J2.1)
+  ft_val_frac: 0.1
+
+seed: 0
+
+split:
+  train_frac: 0.7
+  val_frac: 0.1
+  test_frac: 0.2
+  seed: 100
+
+evaluation:
+  suppressed_thresholds: [0.95, 0.9, 0.8]
+
+write_root: null

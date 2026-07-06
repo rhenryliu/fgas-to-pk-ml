@@ -32,3 +32,24 @@ configuration): **Arm P — `dual_vae_pca_vae.yaml`**, by full I3 dominance
 (global, all suppressed thresholds, both coverage distances; see
 `dual_vae_stage4_gate_report.md`). Arm V and (pca, pca) proceed as the
 Stage 5b arms.
+
+---
+
+# Second and final test batch (amendment 7, J1) — fixed BEFORE either run
+
+Committed prior to any test-fold number existing for either configuration.
+Exactly two new configurations; each evaluated on test exactly once, only
+after its val-fold gates clear; no other configuration touches test; the
+amendment-6 primary designation is unaffected regardless of outcomes:
+
+4. **`dual_vae_ft`** — the Stage 6 two-phase fine-tune of Arm V
+   (codec_x = vae ld=3 beta_x=0.01, codec_y = vae ld=3 beta_y=1e-4, frozen
+   decoder-Y incl. obs_logvar; MDN K=3 re-fit in Phase 2). Val gates first
+   (G4.2 in full; calibration-regression vs Arm V; OOD ||mu1'||; G4.3).
+   Run config: `scripts/configs/run/dual_vae_ft.yaml`.
+5. **`vib_regressor`** — the CVAE comparison row on the corrected pinned
+   context (existing run config, pinned split; J4). Point-accuracy metrics
+   only in the notes; its sampling spread carries no valid uncertainty
+   semantics.
+
+Stage 6 recoverability outcome: no expectation encoded (J2.4).
