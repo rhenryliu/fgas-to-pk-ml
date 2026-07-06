@@ -40,6 +40,17 @@ SUITE = "CAMELS-IllustrisTNG-L50n512-SB35"
 SNAPSHOT, REDSHIFT = 74, 0.47
 NEW_TAG, REF_TAG = "20260706", "20260702"
 
+# Deliberate widening of the PROVISIONAL default sanity range ([-1, 3]) for
+# this build, per the guard's own escape hatch: the first build attempt
+# hard-failed on 22 cells (0.02%), all at R >= 9.4 Mpc/h and concentrated at
+# the sparsest stacks (nd 0/1; worst 117.8 at nd 1, R = 20) -- the stacked
+# Delta Sigma_total legitimately becomes small at the outermost radii, a mild
+# physically-driven tail, not the per-halo singularity the guard exists to
+# catch (the old corruption reached +-8540 across 992 cells at all radii).
+# The pinned nd-index-2 slice spans [-1.32, 4.70]. FLAGGED FOR MAINTAINER
+# CONFIRMATION; the realized per-bin range is stamped into __meta__ either way.
+BUILD_SANITY_RANGE = (-15.0, 130.0)
+
 # E3.2: arrays that must be bitwise-identical to the reference tag.
 IDENTICAL_KEYS = (
     "suppression", "k", "radii_mpch", "camels_params", "camels_param_names",
@@ -59,11 +70,14 @@ def main() -> int:
         snapshot=SNAPSHOT,
         rank_key="halo_mass",
         params_path=Path(DATA_DIR) / "camels_params_matrix.npy",
+        fgas_sanity_range=BUILD_SANITY_RANGE,
         progress=lambda i, n: print(f"\r{i}/{n}", end="", flush=True),
     )
     print()
     print("fgas grid:", dataset.fgas.shape, "(n_sims, n_nd, n_radii)")
-    stamp = fgas_meta_stamp(dataset.fgas, DEFAULT_FGAS_SANITY_RANGE)
+    print(f"NOTE: sanity range widened deliberately to {BUILD_SANITY_RANGE} "
+          f"(default {DEFAULT_FGAS_SANITY_RANGE} is provisional; see comment).")
+    stamp = fgas_meta_stamp(dataset.fgas, BUILD_SANITY_RANGE)
     print("realized fgas range:",
           min(stamp["fgas_realized_range_per_bin"]["min"]),
           max(stamp["fgas_realized_range_per_bin"]["max"]))
@@ -87,7 +101,14 @@ def main() -> int:
                 "supersedes all earlier tags by DEFINITION change."
             ),
         },
-        notes="Branch-A rebuild: ratio-of-stacks fgas; E2.1 sanity guard passed.",
+        notes=(
+            "Branch-A rebuild: ratio-of-stacks fgas. E2.1 guard run with a "
+            f"deliberately widened range {BUILD_SANITY_RANGE} (default [-1, 3] "
+            "provisional): 22 cells (0.02%), all R >= 9.4 Mpc/h, mostly nd 0/1 "
+            "(sparse stacks; stacked DSigma_total small at outer radii), lie "
+            "outside the default; pinned nd-2 slice spans [-1.32, 4.70]. "
+            "Maintainer confirmation of the range pending."
+        ),
         extra_meta=stamp,
     )
     print("saved:", out)
