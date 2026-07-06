@@ -131,3 +131,28 @@ STOPPED per 3.0.6. No Stage 3 resumption, no Stage 4, no builder edit.
   change**, not merely by tag; the `fgas_definition` `__meta__` stamp is the
   discriminator (absent = old statistic; see also the stale-variant warning
   in `known_issues.md`).
+
+---
+
+## Final addendum (amendment 4, 2026-07-06): guard redesign, crop ruling, F3.3 census
+
+- **Guard redesigned two-tier (F3.1):** non-finite hard-fails anywhere;
+  outside `fgas_sanity_range` hard-fails only **within** the modelled radial
+  window; outside the window the values are censused into `__meta__`
+  (`fgas_outside_modelled_census`) and warned, not failed. Tag 20260706 is
+  NOT rebuilt (the guard changes no values); its stamped (-15, 130) range is
+  the documented escape hatch (ledger note in `known_issues.md`).
+- **Crop ruling (F2, maintainer physics):** modelled scope R < 10 comoving
+  Mpc/h (`radial_range_mpch: [0, 10]` in the pinned config; 16 of 20 bins,
+  0.1 .. 9.364). Rationale: the stacked denominator legitimately decays
+  toward zero at the outermost radii — intrinsically ill-conditioned there;
+  boundary preliminary and maintainer-owned.
+- **F3.3 census outcome: PASS.** The retained (nd-2, cropped) slice of tag
+  20260706 spans [0.041, 1.250] against the provisional [-1, 3] — zero
+  violations; every earlier extreme (incl. the nd-2 pair at -1.32 / 4.70)
+  sat in the excluded R > 10 bins. The provisional sanity range needed no
+  widening within the modelled scope.
+- F7.1 sweep: no live citations of the historical headline RMSEs
+  (0.0666 / 0.078 line) or the narrow-band-collapse scatter remain in the
+  notes; the citable nonlinearity evidence is the F4.2 section of the Stage 1
+  gate report (cropped, clean data).
