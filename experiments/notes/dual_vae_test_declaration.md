@@ -26,6 +26,9 @@ Rules in force:
 - No configuration is selected, tuned, or modified in response to a test
   number.
 
-Primary designation: **PENDING** — to be inserted here after the I3
-criterion is applied to the val-fold ladder results (and before any test
-run). No expectation about the outcome is encoded (I6.2).
+Primary designation (entered 2026-07-06 after the I3 criterion was applied
+to the val-fold ladders, BEFORE any test evaluation of any declared
+configuration): **Arm P — `dual_vae_pca_vae.yaml`**, by full I3 dominance
+(global, all suppressed thresholds, both coverage distances; see
+`dual_vae_stage4_gate_report.md`). Arm V and (pca, pca) proceed as the
+Stage 5b arms.

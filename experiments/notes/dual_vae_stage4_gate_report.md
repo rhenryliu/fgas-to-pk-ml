@@ -1,4 +1,50 @@
-# Stage 4.0 resolution (amendment 6, 2026-07-06): dual-track ladder
+# Stage 4 dual-track ladder — G4.1/G4.2/G4.3 pass both arms; I3 primary = Arm P
+
+Amendment-6 dual track, implementation commit `0908bc9` preceding the runs.
+Both arms: frozen VAE-Y `20260706T190601Z__8a715039__8522dd4`, identical
+folds/seeds/protocols, mappings re-fit per arm (I2.3).
+
+## Two-armed ladder results (val fold)
+
+| | Arm V (vae ld=3 b=0.01) | Arm P (pca d=4) |
+|---|---|---|
+| rung 1 ridge | 0.05585 (`20260706T214939Z__23bd8fd0`) | 0.04106 (`20260706T215153Z__23bd8fd0`) |
+| rung 2 MLP | 0.05396 (`20260706T214941Z__2bf8a473`) | 0.03245 (`20260706T215154Z__2bf8a473`) |
+| rung 3 MDN (K=3) | 0.05431 (`20260706T214941Z__eae10d43`) | 0.03270 (`20260706T215154Z__eae10d43`) |
+| rung 3 SP<0.95 (n=1240) | 0.08971 | **0.05204** |
+| rung 3 SP<0.9 (n=671) | 0.11770 | **0.06726** |
+| rung 3 SP<0.8 (n=234) | 0.18147 | **0.08595** |
+| coverage pooled 68 / 95 | 0.7132 / 0.8941 | 0.6748 / 0.9096 |
+| coverage distance 68 / 95 | 0.0332 / 0.0559 | **0.0052** / **0.0404** |
+| K sensitivity (1/3/5) | 0.0544 / 0.0543 / 0.0546 | 0.0303 / 0.0327 / 0.0309 |
+| r(per-curve RMSE, code norm) | 0.127 | 0.123 |
+
+## Gate verdicts
+
+- **G4.2 coverage (+/-10 pp pooled, both levels): PASS for both arms.**
+- **G4.3 per-curve / OOD cross-reference: PASS for both arms** (analysis
+  present; findings: weak correlation ~0.12 between per-curve RMSE and code
+  norm in both arms — no OOD-driven failure mode on val; worst-curve lists
+  in the run summaries).
+- **G4.1 comparison table: appended two-armed to
+  `dual_vae_baseline_table.md`.** Ladder bottleneck cost (rung 2 vs
+  `mlp_regressor` 0.019378): Arm V ratio 2.78; **Arm P ratio 1.67** — the
+  ladder's own version of the H3.6 architecture-cost number.
+
+## I3 primary designation (val evidence only; fixed criterion, applied after)
+
+**Arm P dominates on ALL I3 components** — global RMSE (0.03270 < 0.05431),
+suppressed-regime RMSE at every N >= 30 threshold (0.05204/0.06726/0.08595 <
+0.08971/0.11770/0.18147), and pooled-coverage distance at both levels
+(0.0052/0.0404 < 0.0332/0.0559). No split verdict. **Primary = Arm P
+(`dual_vae_pca_vae.yaml`); Arm V is retained as a first-class ablation arm
+(I3.3).** The dual-track result is consistent with the Stage 4.0 probe and
+the I1 breakdown, now with full metrics: the amendment-6 design question is
+answered without a single-number decision.
+
+---
+
+# [context section] Stage 4.0 resolution (amendment 6, 2026-07-06): dual-track ladder
 
 The maintainer resolved the G4.0b STOP (which stands below as recorded
 history) with a dual-track Stage 4: Arm V (codec_x = vae, ld=3, beta=0.01)

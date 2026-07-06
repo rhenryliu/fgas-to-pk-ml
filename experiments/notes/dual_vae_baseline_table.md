@@ -63,3 +63,23 @@ f_gas profiles; SP(k) content identical). Kept for provenance only.
 | `pca_linear` | `20260705T204410Z__86702b77__fe6a28c` | 0.057267 | 0.076948 (n=1240) | 0.098986 (n=671) | 0.16107 (n=234) |
 | `mlp_regressor` | `20260705T204419Z__939cfe69__fe6a28c` | 0.050471 | 0.083179 (n=1240) | 0.10746 (n=671) | 0.16809 (n=234) |
 | `mlp` | `20260705T204423Z__b90ff578__fe6a28c` | 0.061675 | 0.09848 (n=1240) | 0.12847 (n=671) | 0.20395 (n=234) |
+
+## Stage 4 composite rungs — Arm V ({'codec_x': 'vae', 'vae_x_run_id': '20260706T200039Z__3080064e__8cbe5b2'}) (appended; val fold)
+
+Frozen y-codec: VAE-Y `20260706T190601Z__8a715039__8522dd4`. Bottleneck cost (rung 2 vs `mlp_regressor` 0.019378): gap +0.034581 (ratio 2.785).
+
+| rung | run_id | val RMSE | val RMSE (SP<0.95) | val RMSE (SP<0.9) | val RMSE (SP<0.8) |
+|---|---|---|---|---|---|
+| `latent_map_ridge` | `20260706T214939Z__23bd8fd0__0908bc9` | 0.055854 | 0.09004 (n=1240) | 0.11782 (n=671) | 0.18093 (n=234) |
+| `latent_map_mlp` | `20260706T214941Z__2bf8a473__0908bc9` | 0.053959 | 0.089127 (n=1240) | 0.11674 (n=671) | 0.17784 (n=234) |
+| `latent_map_mdn` | `20260706T214941Z__eae10d43__0908bc9` | 0.054312 | 0.089709 (n=1240) | 0.1177 (n=671) | 0.18147 (n=234) |
+
+## Stage 4 composite rungs — Arm P ({'codec_x': 'pca', 'pca_dim': 4}) (appended; val fold)
+
+Frozen y-codec: VAE-Y `20260706T190601Z__8a715039__8522dd4`. Bottleneck cost (rung 2 vs `mlp_regressor` 0.019378): gap +0.013075 (ratio 1.675).
+
+| rung | run_id | val RMSE | val RMSE (SP<0.95) | val RMSE (SP<0.9) | val RMSE (SP<0.8) |
+|---|---|---|---|---|---|
+| `latent_map_ridge` | `20260706T215153Z__23bd8fd0__0908bc9` | 0.041064 | 0.066268 (n=1240) | 0.085552 (n=671) | 0.12335 (n=234) |
+| `latent_map_mlp` | `20260706T215154Z__2bf8a473__0908bc9` | 0.032453 | 0.049002 (n=1240) | 0.063105 (n=671) | 0.079619 (n=234) |
+| `latent_map_mdn` | `20260706T215154Z__eae10d43__0908bc9` | 0.032698 | 0.052044 (n=1240) | 0.067258 (n=671) | 0.08595 (n=234) |

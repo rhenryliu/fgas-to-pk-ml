@@ -1,0 +1,105 @@
+{
+  "stage": "dual_vae_stage4",
+  "rung": "latent_map_mlp",
+  "frozen_components": {
+    "arm": "V",
+    "codec_x": "vae",
+    "vae_x_run_id": "20260706T200039Z__3080064e__8cbe5b2",
+    "vae_y_run_id": "20260706T190601Z__8a715039__8522dd4"
+  },
+  "n_train": 717,
+  "n_val": 102,
+  "composite_val_rmse": 0.0539592913958274,
+  "composite_suppressed_rmse": {
+    "0.95": {
+      "rmse": 0.08912703910284799,
+      "n_bins": 1240
+    },
+    "0.9": {
+      "rmse": 0.11673765203389769,
+      "n_bins": 671
+    },
+    "0.8": {
+      "rmse": 0.1778366580256628,
+      "n_bins": 234
+    }
+  },
+  "per_curve": {
+    "mean": 0.030301376349418725,
+    "median": 0.016830534355956387,
+    "p90": 0.06564614256415685,
+    "max": 0.341720962855285,
+    "rmse_vs_mu1_norm_pearson_r": 0.13858523293733305,
+    "worst": [
+      {
+        "sim_index": 118,
+        "rmse": 0.341720962855285,
+        "mu1_norm": 5.00023889541626,
+        "mu1_norm_percentile": 60.396039603960396
+      },
+      {
+        "sim_index": 57,
+        "rmse": 0.1840340663932896,
+        "mu1_norm": 3.5210795402526855,
+        "mu1_norm_percentile": 21.782178217821784
+      },
+      {
+        "sim_index": 393,
+        "rmse": 0.16532191350862413,
+        "mu1_norm": 5.265544891357422,
+        "mu1_norm_percentile": 66.33663366336634
+      },
+      {
+        "sim_index": 201,
+        "rmse": 0.11955920873420084,
+        "mu1_norm": 3.8072662353515625,
+        "mu1_norm_percentile": 30.693069306930692
+      },
+      {
+        "sim_index": 574,
+        "rmse": 0.11872902886993084,
+        "mu1_norm": 10.470168113708496,
+        "mu1_norm_percentile": 95.04950495049505
+      },
+      {
+        "sim_index": 84,
+        "rmse": 0.11869482808891735,
+        "mu1_norm": 12.848823547363281,
+        "mu1_norm_percentile": 100.0
+      },
+      {
+        "sim_index": 761,
+        "rmse": 0.0743696602014888,
+        "mu1_norm": 2.9334747791290283,
+        "mu1_norm_percentile": 15.841584158415841
+      },
+      {
+        "sim_index": 83,
+        "rmse": 0.07348765330237714,
+        "mu1_norm": 6.3292436599731445,
+        "mu1_norm_percentile": 78.21782178217822
+      },
+      {
+        "sim_index": 297,
+        "rmse": 0.06970867061292892,
+        "mu1_norm": 9.211353302001953,
+        "mu1_norm_percentile": 92.07920792079207
+      },
+      {
+        "sim_index": 473,
+        "rmse": 0.06856204777345622,
+        "mu1_norm": 11.810669898986816,
+        "mu1_norm_percentile": 98.01980198019803
+      }
+    ]
+  },
+  "spread_semantics": "F0.5: rung-3 spread = mapping density + decoder-Y observation noise; EXCLUDES encoder-X posterior spread and input noise.",
+  "bottleneck_cost": {
+    "rung2_val_rmse": 0.0539592913958274,
+    "mlp_regressor_val_rmse": 0.019378,
+    "mlp_regressor_run_id": "20260706T185713Z__c62b6ed0__a4ba5aa",
+    "gap": 0.0345812913958274,
+    "ratio": 2.784564526567623
+  },
+  "best_epoch": 38
+}
