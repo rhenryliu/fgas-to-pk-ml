@@ -26,6 +26,7 @@ from fgas_spk.models import mlp_regressor  # noqa: F401  (registers "mlp_regress
 from fgas_spk.models import pca_linear  # noqa: F401  (registers "pca_linear")
 from fgas_spk.models import vib_regressor  # noqa: F401  (registers "vib_regressor")
 from fgas_spk.models import cvae  # noqa: F401  (registers "cvae")
+from fgas_spk.models import dual_vae  # noqa: F401  (registers "dual_vae")
 
 __all__ = [
     "REGISTRY",
@@ -36,4 +37,5 @@ __all__ = [
     "pca_linear",
     "vib_regressor",
     "cvae",
+    "dual_vae",
 ]

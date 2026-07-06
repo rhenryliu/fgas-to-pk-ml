@@ -49,6 +49,7 @@ from fgas_spk.loader import DataConfig, load_training_data
 from fgas_spk.models.dual_vae_components import (
     LatentMapMDN,
     LatentMapMLP,
+    LatentMapRidge,
     composite_predict,
     composite_samples,
 )
@@ -63,10 +64,10 @@ from stage2_vae_y import (
     _suppressed_recon_rmse,
 )
 
-# mlp_regressor on the pinned tag-20260702 context (Stage 1 refresh); the
-# G4.1 information-bottleneck-cost reference.
-MLP_REGRESSOR_VAL_RMSE = 0.050388
-MLP_REGRESSOR_RUN_ID = "20260705T221749Z__5e0c03f0__760d8d6"
+# mlp_regressor on the pinned context (tag 20260706, R < 10 crop; F4 table);
+# the G4.1 information-bottleneck-cost reference.
+MLP_REGRESSOR_VAL_RMSE = 0.019378
+MLP_REGRESSOR_RUN_ID = "20260706T185713Z__c62b6ed0__a4ba5aa"
 
 # Rung hyperparameters (shared trunk conventions with the components).
 MAP_PARAMS = {
@@ -86,31 +87,6 @@ COVERAGE_TOLERANCE_PP = 10.0
 N_PREDICTIVE_SAMPLES = 400
 
 NOTE_PATH = "experiments/notes/dual_vae_baseline_table.md"
-
-
-class RidgeRung:
-    """Rung 1: RidgeCV ``z1 -> z2`` behind the shared ``predict`` interface."""
-
-    def __init__(self, seed: int = 0) -> None:
-        self.seed = seed  # inert (closed-form fit); recorded for uniformity
-        self._model = None
-
-    def fit(self, z1: np.ndarray, z2: np.ndarray) -> None:
-        """Fit RidgeCV on the standardised-free raw code pairs."""
-        from sklearn.linear_model import RidgeCV
-
-        self._model = RidgeCV(alphas=np.logspace(-4, 3, 15)).fit(z1, z2)
-
-    def predict(self, z1: np.ndarray) -> np.ndarray:
-        """Predict ``z2`` for codes ``z1``."""
-        if self._model is None:
-            raise RuntimeError("RidgeRung.predict called before fit.")
-        return self._model.predict(z1)
-
-    @property
-    def alpha(self) -> list[float]:
-        """The selected regularisation strength(s)."""
-        return [float(a) for a in np.atleast_1d(self._model.alpha_)]
 
 
 def coverage_table(
@@ -291,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
         map_params["epochs"] = args.epochs
 
     # --- fit the three rungs -------------------------------------------------
-    ridge = RidgeRung(seed=args.seed)
+    ridge = LatentMapRidge(seed=args.seed)
     ridge.fit(mu1_tr, mu2_tr)
 
     mlp = LatentMapMLP(seed=args.seed, **map_params)

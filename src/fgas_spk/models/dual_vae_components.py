@@ -975,3 +975,118 @@ def composite_samples(
     rng = np.random.default_rng(seed)
     noise = rng.normal(size=decoded.shape) * vae_y.obs_sigma()
     return decoded + noise
+
+
+class LatentMapRidge:
+    """Stage 4 rung 1: RidgeCV ``z1 -> z2`` behind the shared rung interface.
+
+    sklearn is imported lazily inside :meth:`fit`. The ``seed`` is inert (the
+    fit is closed-form) and recorded for uniformity with the other rungs.
+    """
+
+    def __init__(self, seed: int = 0, **_: object) -> None:
+        self.seed = seed
+        self._model = None
+
+    def fit(self, z1: np.ndarray, z2: np.ndarray) -> None:
+        """Fit RidgeCV on the raw code pairs.
+
+        Args:
+            z1 (np.ndarray): Inputs, shape (n_examples, d1).
+            z2 (np.ndarray): Targets, shape (n_examples, d2).
+        """
+        from sklearn.linear_model import RidgeCV
+
+        self._model = RidgeCV(alphas=np.logspace(-4, 3, 15)).fit(z1, z2)
+
+    def predict(self, z1: np.ndarray) -> np.ndarray:
+        """Predict ``z2`` for codes ``z1``.
+
+        Args:
+            z1 (np.ndarray): Inputs, shape (n_examples, d1).
+
+        Returns:
+            np.ndarray: Predicted codes, shape (n_examples, d2).
+        """
+        if self._model is None:
+            raise RuntimeError("LatentMapRidge.predict called before fit.")
+        return self._model.predict(z1)
+
+    @property
+    def alpha(self) -> list[float]:
+        """The selected regularisation strength(s)."""
+        return [float(a) for a in np.atleast_1d(self._model.alpha_)]
+
+
+class PcaCodec:
+    """Amendment-B7 "pca" codec: PCA scores as codes, inverse transform as decode.
+
+    Presents the same surface the dual-VAE composite needs from a codec --
+    ``fit(v, context)`` / ``encode`` / ``decode`` / ``reconstruct`` /
+    ``obs_sigma`` -- so the ``dual_vae`` plugin is codec-agnostic. The context
+    is accepted for interface compatibility and **ignored** (PCA is
+    unconditional). ``obs_sigma`` returns the per-bin standard deviation of
+    the train-fold reconstruction residuals, honestly interpreted as
+    code-truncation error, so ``predict_samples`` remains well-defined for
+    any codec pair. sklearn is imported lazily inside :meth:`fit`.
+
+    Args:
+        latent_dim (int): Number of retained components. Defaults to 2.
+        seed (int): PCA ``random_state`` (inert for the deterministic full
+            SVD used here; recorded). Defaults to 0.
+        **_: Extra keyword arguments accepted and ignored (shared
+            hyperparameter dicts carry VAE-only keys).
+    """
+
+    def __init__(self, latent_dim: int = 2, seed: int = 0, **_: object) -> None:
+        self.latent_dim = latent_dim
+        self.seed = seed
+        self._pca = None
+        self._resid_std: np.ndarray | None = None
+
+    def fit(self, v: np.ndarray, context: np.ndarray | None = None) -> None:
+        """Fit the PCA codec and its truncation-residual scale.
+
+        Args:
+            v (np.ndarray): Modality values, shape (n_examples, n_bins).
+            context (np.ndarray | None): Ignored (interface compatibility).
+        """
+        from sklearn.decomposition import PCA
+
+        v = np.asarray(v, dtype=float)
+        n_comp = min(self.latent_dim, v.shape[0], v.shape[1])
+        self._pca = PCA(
+            n_components=n_comp, svd_solver="full", random_state=self.seed
+        ).fit(v)
+        resid = v - self._pca.inverse_transform(self._pca.transform(v))
+        self._resid_std = resid.std(axis=0)
+
+    def encode(
+        self, v: np.ndarray, context: np.ndarray | None = None
+    ) -> np.ndarray:
+        """Return PCA scores for ``v`` (the codec's codes)."""
+        self._require_fitted("encode")
+        return self._pca.transform(np.asarray(v, dtype=float))
+
+    def decode(
+        self, z: np.ndarray, context: np.ndarray | None = None
+    ) -> np.ndarray:
+        """Inverse-transform codes back to the modality (raw scale)."""
+        self._require_fitted("decode")
+        return self._pca.inverse_transform(np.asarray(z, dtype=float))
+
+    def reconstruct(
+        self, v: np.ndarray, context: np.ndarray | None = None
+    ) -> np.ndarray:
+        """Truncated-PCA reconstruction of ``v``."""
+        return self.decode(self.encode(v))
+
+    def obs_sigma(self) -> np.ndarray:
+        """Per-bin train-fold truncation-residual std (the noise-role stand-in)."""
+        self._require_fitted("obs_sigma")
+        return np.asarray(self._resid_std)
+
+    def _require_fitted(self, method: str) -> None:
+        """Raise if the codec has not been fitted yet."""
+        if self._pca is None:
+            raise RuntimeError(f"PcaCodec.{method} called before fit.")
