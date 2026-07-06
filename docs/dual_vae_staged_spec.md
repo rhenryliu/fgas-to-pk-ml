@@ -755,3 +755,77 @@ E7. **Housekeeping.** E7.1 resolution addendum to the forensics note. E7.2 the
     cite it as an expectation. E7.3 ledger note: all pre-20260706 X-dependent
     results are superseded by definition change; the stamp is the
     discriminator.
+
+---
+---
+
+# Maintainer amendment 4 (2026-07-06): quadrature adequacy gate + radial crop + beta extension
+
+Recorded verbatim; resolves the E5 STOP. The G2.1' failure is judged an
+artifact of the gate's operationalization, not of the codec: the
+10%-of-baseline fraction was a proxy for the actual adequacy criterion (codec
+error subdominant to the pipeline floor in quadrature); the codec did not
+regress — the bar moved because the baseline improved on clean data. The
+Stage 3 options menu remains closed.
+
+F1. **G2.1' reformed to the quadrature criterion.** Let `base` = best
+    same-tag, same-config cross-modal val RMSE from the current Stage 1
+    table, `codec` = selected VAE-Y val reconstruction RMSE (posterior-mean
+    decode, raw scale). Gate: sqrt(base^2 + codec^2) / base - 1 <= 0.01,
+    equivalently codec <= base * sqrt(1.01^2 - 1) ~= 0.1418 * base.
+    Semantics: the y-codec may inflate the achievable pipeline floor by at
+    most 1%. (Derivation: if the pipeline's irreducible error is `base` and
+    the codec contributes independently, the floor with the codec is the
+    quadrature sum; requiring <= 1% inflation gives the bound.) The former
+    10% linear fraction is superseded as a proxy. Runtime-relative; no
+    absolute bar. F1.3 audit: no other budget-fraction criteria exist in the
+    spec (G3.1' is a comparative guardrail, not a budget criterion — left).
+F2. **Radial crop (maintainer physics ruling).** Modelled radial range
+    cropped to R < 10 in the stored grid's native units (comoving Mpc/h,
+    verified from the sidecar `units` block and the `radii_mpch` key).
+    Implemented via the DataConfig `radial_range_mpch` load-time crop; no
+    rebuild — the crop is modelling scope, not a data change. Rationale:
+    ratio-of-stacks cured the per-halo zero-crossing defect, but the stacked
+    denominator itself legitimately decays toward zero at the outermost
+    radii, making the statistic intrinsically ill-conditioned there; the
+    outermost bins are excluded pending a physics assessment of the
+    usable-signal boundary against the real-data stacks. The boundary value
+    10 is preliminary and maintainer-owned.
+F3. **Guard redesign (builder; NO rebuild of 20260706).** Two-tier guard
+    parameterized by `modelled_range` (native radial units, set to the F2
+    crop): non-finite hard-fails anywhere; within modelled_range hard-fail
+    outside `fgas_sanity_range` (default [-1, 3]); outside modelled_range
+    census (count/min/max per bin) into `__meta__`, warn, don't fail. F3.2:
+    20260706 is NOT rebuilt (the guard changes no values); its stamped
+    (-15, 130) range reflects the documented escape hatch; two-tier semantics
+    apply from the next build. F3.3: census the pinned (nd-2, cropped) slice
+    of the current build against [-1, 3] BEFORE anything trains; any retained
+    violation is a STOP (do not widen, do not move the crop autonomously).
+    F3.4: tests updated for two-tier behaviour.
+F4. **Stage 1 fourth regeneration** under the cropped config (PCA baselines
+    with B5, baseline refresh, table regenerated; superseded headings keyed
+    by tag AND radial range). F4.2 re-issue the map-nonlinearity finding on
+    cropped data (the citable version). F4.3 re-evaluate G1.
+F5. **Stage 2 — capped beta extension, then the reformed gate.** F5.1 extend
+    the sweep by exactly one decade: beta = 1e-4 at latent_dim_y in {2,3,4}
+    (three runs; same seeds/protocol). **Cap: one-time, bounded
+    evidence-completion of the rate-distortion curve; no further beta
+    extensions in any later amendment cycle.** F5.2 no retrain of existing
+    configurations (y/params unchanged by the crop; the 20260706 sweep
+    stands); select per B1 over the full sweep including the new decade.
+    F5.3 evaluate reformed G2.1' against the F4 best cross-modal RMSE;
+    re-evaluate G2.2'/G2.4 if the selection changed; update G2.3 verdict (i)
+    with the completed rate-distortion curve. F5.4 optional finding run:
+    latent_dim_y = 6 at the selected beta (not gated; excluded from codec
+    selection). F5.5 update the Stage 2 gate report.
+F6. **Stage 3 and onward.** F6.1 on G2' pass: Stage 3 on the cropped config,
+    hardened gates, G3.1' floor recomputed from the F4 pca_linear baseline;
+    no VAE-X likelihood/preprocessing changes (E6.3 logic stands). F6.2 on
+    G3' pass: unpark Stage 4 and proceed through Stages 4, 5, 5b without
+    further maintainer stops, subject to GR5.
+F7. **Housekeeping.** F7.1 notes citing the old narrow-band-collapse scatter
+    or historical headline RMSEs (0.0666 / 0.078 line) gain superseded
+    pointers to the F4.2 finding. F7.2 forensics note gains a final addendum
+    (guard redesign, crop ruling, F3.3 census outcome). F7.3 no expectations
+    about post-crop baselines are encoded anywhere; report what the data
+    shows.
