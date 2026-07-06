@@ -1,0 +1,253 @@
+{
+  "stage": "dual_vae_stage3",
+  "component": "vae_x",
+  "latent_dim": 2,
+  "beta": 1.0,
+  "selected": true,
+  "n_train": 717,
+  "n_val": 102,
+  "decode_convention": "posterior-mean decode (amendment B4)",
+  "val_recon_rmse": 0.03298072645962339,
+  "train_recon_rmse": 0.019827180208176816,
+  "pca_val_rmse_matched_dim": 0.03236534958017769,
+  "stage1_pca_x_run_id": "20260706T185651Z__4b5b02ea__a4ba5aa",
+  "g31_prime_downstream_adequacy": {
+    "vae_arm": {
+      "rmse": 0.06381956154812124,
+      "suppressed": {
+        "0.95": {
+          "rmse": 0.10142627660986571,
+          "n_bins": 1240
+        },
+        "0.9": {
+          "rmse": 0.13336119633113191,
+          "n_bins": 671
+        },
+        "0.8": {
+          "rmse": 0.20953687888715405,
+          "n_bins": 234
+        }
+      },
+      "ridge_alpha": [
+        3.1622776601683795
+      ]
+    },
+    "pca_arm": {
+      "rmse": 0.0579551918017349,
+      "suppressed": {
+        "0.95": {
+          "rmse": 0.09319438440561877,
+          "n_bins": 1240
+        },
+        "0.9": {
+          "rmse": 0.12193148739971404,
+          "n_bins": 671
+        },
+        "0.8": {
+          "rmse": 0.19463682118770573,
+          "n_bins": 234
+        }
+      },
+      "ridge_alpha": [
+        0.03162277660168379
+      ]
+    },
+    "ratio": 1.101187996520629,
+    "guardrail": 1.05,
+    "floor_reference_pca_linear": 0.038537,
+    "floor_ok": false,
+    "pass": false
+  },
+  "frozen_vae_y_run_id": "20260706T190601Z__8a715039__8522dd4",
+  "kl_per_dim_train": [
+    2.0135583877563477,
+    2.2899348735809326
+  ],
+  "activity_train": [
+    50.4193115234375,
+    64.34756469726562
+  ],
+  "kl_per_dim_val": [
+    1.9292078018188477,
+    2.1474153995513916
+  ],
+  "activity_val": [
+    41.69007110595703,
+    50.20601272583008
+  ],
+  "collapse_criterion": "per-dim KL >= 0.01 nats at best epoch, train fold (G3.2', B3)",
+  "collapse_ok": true,
+  "g34_sanity_ok": true,
+  "obs_sigma_raw_scale": [
+    0.06846407770697448,
+    0.07948097702258482,
+    0.06379076736499213,
+    0.05103568833473084,
+    0.043036580437720656,
+    0.037949151379819294,
+    0.03537239671309883,
+    0.032453034009037145,
+    0.032138602658043476,
+    0.03098526820440008,
+    0.030037620894346896,
+    0.029416708330994138,
+    0.027821479468717682,
+    0.027922606145499906,
+    0.028760374311437766,
+    0.028144817025351793
+  ],
+  "ood_reference": {
+    "train": {
+      "norm": {
+        "median": 1.2705785048626155,
+        "p99": 3.7988020867108125,
+        "max": 4.731645166382203
+      },
+      "per_dim": {
+        "min": [
+          -2.78894305229187,
+          -2.675706624984741
+        ],
+        "max": [
+          3.9897661209106445,
+          3.908787488937378
+        ]
+      }
+    },
+    "val": {
+      "norm": {
+        "median": 1.1597129825394534,
+        "p99": 3.341580405631021,
+        "max": 3.554570342162336
+      },
+      "per_dim": {
+        "min": [
+          -2.8907523155212402,
+          -2.5440988540649414
+        ],
+        "max": [
+          2.645357131958008,
+          2.7732110023498535
+        ]
+      }
+    }
+  },
+  "best_epoch": 379,
+  "reduction_convention": "ELBO reduction (GR7): Gaussian NLL summed over k bins and KL summed over latent dimensions, both averaged over the batch; effective weight ~0.5/exp(obs_logvar_b) per bin vs beta=1 per latent dimension; standardised scale during training, RMSE/obs_sigma reported on the raw SP(k) scale.",
+  "latent_param_correlations": {
+    "fold": "val",
+    "param_names": [
+      "Omega0",
+      "sigma8",
+      "WindEnergyIn1e51erg",
+      "RadioFeedbackFactor",
+      "VariableWindVelFactor",
+      "RadioFeedbackReiorientationFactor",
+      "OmegaBaryon",
+      "HubbleParam",
+      "n_s",
+      "MaxSfrTimescale",
+      "FactorForSofterEQS",
+      "IMFslope",
+      "SNII_MinMass_Msun",
+      "ThermalWindFraction",
+      "VariableWindSpecMomentum",
+      "WindFreeTravelDensFac",
+      "MinWindVel",
+      "WindEnergyReductionFactor",
+      "WindEnergyReductionMetallicity",
+      "WindEnergyReductionExponent",
+      "WindDumpFactor",
+      "SeedBlackHoleMass",
+      "BlackHoleAccretionFactor",
+      "BlackHoleEddingtonFactor",
+      "BlackHoleFeedbackFactor",
+      "BlackHoleRadiativeEfficiency",
+      "QuasarThreshold",
+      "QuasarThresholdPower",
+      "UVBH0beta",
+      "UVBH0Deltaz",
+      "UVBHepbeta",
+      "UVBHepDeltaz",
+      "SNIa_Rate_Norm",
+      "SNIa_Rate_DTD_power",
+      "SofteningComovingType01"
+    ],
+    "pearson_r": [
+      [
+        0.024724563933354083,
+        -0.0027685009870897573,
+        -0.2332521765788948,
+        0.12809593391959012,
+        0.28263439268350843,
+        0.13320957134793474,
+        0.00274037717506183,
+        -0.1025243083458775,
+        0.019791196318115212,
+        0.24318155315984646,
+        -0.04519543527959119,
+        0.12615402780325927,
+        0.18392288626969444,
+        0.09916934483763151,
+        0.16428478282439227,
+        -0.11997147572421765,
+        -0.13768559213262188,
+        -0.10097256425726592,
+        0.011321370400257517,
+        -0.1104626144744008,
+        -0.2608053072649354,
+        -0.06978215161489168,
+        0.17002092557843523,
+        0.0029037370640421886,
+        -0.09431414534191486,
+        -0.19666373521460764,
+        0.13573523526350914,
+        0.24399305251686318,
+        0.009746995190716059,
+        0.12006029979032032,
+        -0.01954229187617875,
+        -0.08639175257478372,
+        -0.08829301677424385,
+        -0.024794996059588674,
+        0.008097841055493141
+      ],
+      [
+        -0.09105836085482805,
+        -0.05629620763015576,
+        -0.46274372128872937,
+        -0.0032350584765307986,
+        -0.43386903102538926,
+        0.0719122519703024,
+        -0.08361049507668153,
+        0.011397491052664967,
+        0.023511204613848903,
+        0.05633506404704731,
+        0.012090815765752175,
+        0.04375076465178052,
+        0.08358285279126204,
+        -0.11628150607695764,
+        -0.1798869674450225,
+        0.2676343426960373,
+        -0.19094869265497344,
+        -0.14164618900278933,
+        -0.08772994393564072,
+        0.1285005980256426,
+        0.05997798409718024,
+        -0.08552893256880457,
+        -0.0043886564919333165,
+        -0.0704232280168521,
+        0.21550601601369182,
+        0.23068999572813312,
+        -0.1559112288009598,
+        -0.0497317374618358,
+        -0.021684338513121282,
+        -0.08785729861811593,
+        0.10981703013335857,
+        0.09568393210265508,
+        0.04558532693693727,
+        0.04251992296057498,
+        -0.07889850083711132
+      ]
+    ]
+  }
+}

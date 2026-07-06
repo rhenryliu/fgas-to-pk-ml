@@ -1,0 +1,153 @@
+{
+  "stage": "dual_vae_stage3",
+  "component": "vae_x",
+  "latent_dim": 4,
+  "beta": 0.01,
+  "selected": false,
+  "n_train": 717,
+  "n_val": 102,
+  "decode_convention": "posterior-mean decode (amendment B4)",
+  "val_recon_rmse": 0.03151545283077262,
+  "train_recon_rmse": 0.013810958198308375,
+  "pca_val_rmse_matched_dim": 0.02219850564426687,
+  "stage1_pca_x_run_id": "20260706T185651Z__4b5b02ea__a4ba5aa",
+  "g31_prime_downstream_adequacy": {
+    "vae_arm": {
+      "rmse": 0.059500014465285675,
+      "suppressed": {
+        "0.95": {
+          "rmse": 0.09615410469028622,
+          "n_bins": 1240
+        },
+        "0.9": {
+          "rmse": 0.12695426524099632,
+          "n_bins": 671
+        },
+        "0.8": {
+          "rmse": 0.20050813270969445,
+          "n_bins": 234
+        }
+      },
+      "ridge_alpha": [
+        100.0
+      ]
+    },
+    "pca_arm": {
+      "rmse": 0.04106360458556238,
+      "suppressed": {
+        "0.95": {
+          "rmse": 0.0662675511467092,
+          "n_bins": 1240
+        },
+        "0.9": {
+          "rmse": 0.08555245411107895,
+          "n_bins": 671
+        },
+        "0.8": {
+          "rmse": 0.12335458463203483,
+          "n_bins": 234
+        }
+      },
+      "ridge_alpha": [
+        0.03162277660168379
+      ]
+    },
+    "ratio": 1.4489720292651898,
+    "guardrail": 1.05,
+    "floor_reference_pca_linear": 0.038537,
+    "floor_ok": false,
+    "pass": false
+  },
+  "frozen_vae_y_run_id": "20260706T190601Z__8a715039__8522dd4",
+  "kl_per_dim_train": [
+    7.495893478393555,
+    8.24516773223877,
+    9.644632339477539,
+    6.998876571655273
+  ],
+  "activity_train": [
+    7240.44970703125,
+    8742.388671875,
+    22353.595703125,
+    6102.26953125
+  ],
+  "kl_per_dim_val": [
+    6.951196193695068,
+    7.752943515777588,
+    8.491883277893066,
+    6.188267230987549
+  ],
+  "activity_val": [
+    6006.935546875,
+    7763.05126953125,
+    16711.521484375,
+    4260.10107421875
+  ],
+  "collapse_criterion": "per-dim KL >= 0.01 nats at best epoch, train fold (G3.2', B3)",
+  "collapse_ok": true,
+  "g34_sanity_ok": true,
+  "obs_sigma_raw_scale": [
+    0.06677721636525054,
+    0.07889545038978611,
+    0.0635758988525954,
+    0.050815364955354415,
+    0.04278551684699148,
+    0.03758245989949385,
+    0.03478308957105116,
+    0.031281340557119314,
+    0.030633564922616076,
+    0.029200387761985993,
+    0.02786343523924672,
+    0.0260966069578945,
+    0.02499339121116705,
+    0.025529238826466127,
+    0.025111349491697785,
+    0.024867738627136926
+  ],
+  "ood_reference": {
+    "train": {
+      "norm": {
+        "median": 5.166718525447046,
+        "p99": 14.763814377517626,
+        "max": 19.886795672168805
+      },
+      "per_dim": {
+        "min": [
+          -9.151773452758789,
+          -11.396081924438477,
+          -19.600383758544922,
+          -9.677056312561035
+        ],
+        "max": [
+          12.129158020019531,
+          9.405660629272461,
+          10.799345016479492,
+          12.727103233337402
+        ]
+      }
+    },
+    "val": {
+      "norm": {
+        "median": 4.762031815166903,
+        "p99": 12.649983013591335,
+        "max": 13.311890838993943
+      },
+      "per_dim": {
+        "min": [
+          -5.160776615142822,
+          -8.394033432006836,
+          -12.116680145263672,
+          -7.504471302032471
+        ],
+        "max": [
+          6.834932327270508,
+          9.404577255249023,
+          5.802947998046875,
+          6.05336856842041
+        ]
+      }
+    }
+  },
+  "best_epoch": 362,
+  "reduction_convention": "ELBO reduction (GR7): Gaussian NLL summed over k bins and KL summed over latent dimensions, both averaged over the batch; effective weight ~0.5/exp(obs_logvar_b) per bin vs beta=1 per latent dimension; standardised scale during training, RMSE/obs_sigma reported on the raw SP(k) scale."
+}

@@ -1,0 +1,25 @@
+model: vae_fgas
+model_params:
+  latent_dim: 6
+  beta: 1.0
+  hidden: 128
+  n_layers: 2
+  epochs: 5000
+  lr: 0.001
+  weight_decay: 0.0001
+  dropout: 0.0
+  batch_size: 128
+  anneal_epochs: null
+  val_frac: 0.1
+seed: 0
+split:
+  train_frac: 0.7
+  val_frac: 0.1
+  test_frac: 0.2
+  seed: 100
+evaluation:
+  suppressed_thresholds:
+  - 0.95
+  - 0.9
+  - 0.8
+write_root: null
