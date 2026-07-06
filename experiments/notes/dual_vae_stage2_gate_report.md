@@ -1,11 +1,36 @@
-# Dual-VAE Stage 2 gate report — tag 20260702, amended gates: PASS
-> **Conditional status (amendment 2, C3, 2026-07-05):** G2.1' was evaluated
-> against a bar (10% of the best cross-modal baseline, `mlp` 0.042921) that is
-> **provisional pending the Stage 3.0 X-matrix forensics verdict** — every
-> new-tag number involving X is under audit, and the gate is re-evaluated in
-> Branch A if the data are corrected. The VAE-Y model itself and the
-> G2.2'/G2.3/G2.4 conclusions are unaffected (y is bitwise-identical across
-> tags and VAE-Y consumes y and params only).
+# Dual-VAE Stage 2 gate report — tag 20260706 (Branch A): G2.1' FAIL, STOPPED
+
+**C3 conditional status resolved (E5.3): the definitive G2.1' evaluation
+against the clean-data bar is a FAIL.** Full 12-run sweep re-run on tag
+`20260706` (implementation commit `b45bf84` preceded the runs).
+
+- **E5.2 consistency check: PASS, exactly.** Every configuration reproduced
+  its 20260702 numbers bitwise (selected ld=4 beta=0.001: val recon RMSE
+  0.001969, per-dim KL [4.68, 4.06, 13.07, 6.95], best_epoch 2515) — as it
+  must, since VAE-Y consumes y and X_params only and E3.2 asserted both
+  unchanged. No data anomaly.
+- **G2.1' — codec adequacy: FAIL.** Selected val recon RMSE 0.001969 > bar
+  0.0017012 (10% of the clean-data best baseline, `mlp` 0.017012, run
+  `20260706T061104Z__8fc38d33__3e94bcc`). The codec did not get worse — the
+  end-to-end baseline got 2.5x better once the corrupted X was fixed, so the
+  same y-codec truncation error is now 11.6% of the best pipeline error.
+  Runs: `20260706T064012Z...064020Z__*__b45bf84` (12); selected
+  `20260706T064020Z__3ff03e76__b45bf84`.
+- **G2.2' — no collapse: PASS** (as before). **G2.4: PASS.** **G2.3**
+  verdicts carry over verbatim (identical fits and correlations on identical
+  y): disagree / partially agree / partially agree.
+
+**Stopped per GR5.** Stage 3 (E6) not started on this gate state. Options
+that need a maintainer edit: (a) accept 11.6% and relax G21_FRACTION or fix
+an absolute bar; (b) extend the resolved sweep grid (F0.2/F0.3: e.g.
+beta 1e-4 and/or latent_dim_y in {6, 8} — the beta trend 0.01 -> 0.001 gave
+0.00240 -> 0.00197 at ld=4, one more decade may close the 16% gap, but the
+grid is spec-pinned); (c) accept that a y-codec at ~12% of pipeline error is
+adequate for the ladder's diagnostic purpose and re-scope the gate.
+
+---
+
+# [SUPERSEDED — G2.1' bar was provisional; resolved above] Stage 2 gate report — tag 20260702, amended gates: PASS
 
 Re-run under the 2026-07-05 spec amendment (`docs/dual_vae_staged_spec.md`):
 tag `20260702`, beta swept per B1, gates G2.1'/G2.2' per B2/B3, posterior-mean
