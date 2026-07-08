@@ -41,7 +41,10 @@ the test fold exactly once (`dual_vae_test_declaration.md`).
    latents, obs_sigma) is therefore retained at no accuracy cost — it is
    the x-side where reconstruction-trained VAE codes underperform.
 3. **Calibration is healthy in all three arms** (within ~3.5 pp of nominal
-   everywhere); no arm reproduces the historical CVAE under-coverage.
+   everywhere); no arm reproduces the CVAE under-coverage — now a
+   same-context measurement, not a historical precedent: the genuine `cvae`
+   on this exact context covers 0.428/0.716 at nominal 0.68/0.95
+   (`20260708T231014Z__fdbfd21b__864001d`; third test declaration).
 4. **OOD:** the PCA x-codes are norm-bounded on test; Arm V's VAE codes
    reach 15.8 (attenuated echo of the CVAE precedent) without creating
    unique worst-curves. The shared hard sims (598, 977, 305) fail in every

@@ -26,6 +26,7 @@ designated on val evidence before any test number existed.
 
 | model | test RMSE | SP<0.95 | SP<0.9 | SP<0.8 | run_id |
 |---|---|---|---|---|---|
+| `cvae` (calibration invalid, see below) | 0.01254 | 0.01934 | 0.02334 | 0.02806 | `20260708T231014Z__fdbfd21b__864001d` |
 | `mlp` | 0.01403 | 0.02166 | 0.02689 | 0.03391 | `20260706T185716Z__bcdaaee9__a4ba5aa` |
 | `mlp_regressor` | 0.01434 | 0.02258 | 0.02741 | 0.03153 | `20260706T185713Z__c62b6ed0__a4ba5aa` |
 | `vib_regressor` (accuracy only, see below) | 0.01489 | 0.02216 | 0.02748 | 0.03305 | `20260706T224755Z__e1ecad20__3fc7da0` |
@@ -43,6 +44,23 @@ and reports **point-accuracy metrics only** — no coverage or calibration
 entries, because its sampling spread carries no valid uncertainty semantics
 (the documented reason for its renaming from cvae). Historical CVAE numbers
 predate the Branch-A definition change and remain non-comparable (A3/E7.3).
+
+**Genuine-`cvae` row (third declaration, post-close-out addendum,
+2026-07-08):** the Sohn-style conditional VAE — the architecture `dual_vae`
+was designed to replace — re-run on the corrected pinned context
+(`20260708T231014Z__fdbfd21b__864001d`). It is the **most accurate model in
+this table** (test 0.01254, best at every suppressed threshold; per-curve
+median/p90/max 0.0053/0.0202/0.0684), and its predictive spread is
+**severely under-calibrated, as its missing noise head predicts**: coverage
+0.428 / 0.640 / 0.716 at nominal 0.68 / 0.90 / 0.95 — 23-26 pp low at every
+level — with the latent-norm blow-up echo on test (||mu_p|| max 16.0). Its
+row is therefore accuracy-valid but calibration-invalid: the spread is
+semantically meaningful (unlike vib_regressor's) yet unusable as
+uncertainty. The measured head-to-head that motivates the dual-codec
+design: `cvae` 0.0125 RMSE at 0.43 coverage-at-68 vs `dual_vae` primary
+0.0313 RMSE at 0.67 coverage-at-68 — accuracy and calibration currently
+trade off across architectures on this data, and `dual_vae` is the only
+model in the table with usable coverage.
 
 ## Stage 6 outcome (amendment 7, J2): recoverable accuracy, unacceptable calibration
 

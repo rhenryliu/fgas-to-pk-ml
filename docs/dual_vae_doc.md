@@ -32,6 +32,7 @@ restrictions in `experiments/notes/dual_vae_vs_baselines.md`):
 
 | model | test RMSE | SP<0.8 | coverage 68/95 | run_id |
 |---|---|---|---|---|
+| `cvae` (spread invalid: 23-26 pp under) | 0.01254 | 0.02806 | 0.428 / 0.716 | `20260708T231014Z__fdbfd21b__864001d` |
 | `mlp` (direct) | 0.01403 | 0.03391 | — | `20260706T185716Z__bcdaaee9__a4ba5aa` |
 | `mlp_regressor` (direct) | 0.01434 | 0.03153 | — | `20260706T185713Z__c62b6ed0__a4ba5aa` |
 | `vib_regressor` (accuracy only) | 0.01489 | 0.03305 | n/a by design | `20260706T224755Z__e1ecad20__3fc7da0` |
@@ -47,8 +48,13 @@ and interpretable latents (the y-latents organize by feedback physics). Its
 measured cost is roughly a factor of two in raw accuracy against direct
 regressors (2.18x vs `mlp_regressor` on test; 1.67x at the ladder on val) —
 the price of routing through a 3-dimensional y-manifold with a
-posterior-mean z-space objective. Whether that trade is worth it is a
-scientific judgement; the numbers above are the inputs.
+posterior-mean z-space objective. The head-to-head against the architecture
+it replaces makes the trade concrete: the genuine `cvae` is the single most
+accurate model in the table (0.01254) but under-covers by 23-26 pp at every
+nominal level — its spread is unusable as uncertainty — while `dual_vae` is
+the only model in the table with usable coverage. Whether calibration is
+worth ~2.5x in raw accuracy is a scientific judgement; the numbers above are
+the inputs.
 
 ## 2. Quickstart
 
@@ -266,7 +272,12 @@ Notes (all under `experiments/notes/`): `dual_vae_baseline_table.md`,
 - **Single-snapshot scope** (snap74, z=0.47); snap82 exists only under the
   superseded statistic.
 - **`vib_regressor` restriction:** its sampling spread has no uncertainty
-  semantics; its row is accuracy-only, permanently.
+  semantics; its row is accuracy-only, permanently. The genuine `cvae` row
+  (added post-close-out under a third test declaration) is the opposite
+  case: semantically meaningful spread, measured 23-26 pp under-coverage on
+  this context — accuracy-valid, calibration-invalid. A `cvae` with a
+  learned noise head (its known missing piece) is untested here and belongs
+  to future work.
 - **95% tail under-coverage** (~2-3 pp across all arms; diagonal-MDN light
   tails) — observed, not fixed.
 

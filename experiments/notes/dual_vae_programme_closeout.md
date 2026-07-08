@@ -7,10 +7,14 @@ documentation of the final state is `docs/dual_vae_doc.md`.
 - **Recommended model:** `dual_vae`, primary configuration (PCA-x d=4,
   VAE-y ld=3 beta=1e-4, MDN K=3); test run
   `20260706T215627Z__cfc56666__43ea387`.
-- **Test budget:** five declared configurations, each evaluated exactly once
-  (three in the amendment-6 batch, `vib_regressor` in the amendment-7 batch);
-  `dual_vae_ft`'s declared evaluation was conditional on val gates and did
-  not run (calibration regression).
+- **Test budget:** six declared configurations across three declarations,
+  each evaluated exactly once (three in the amendment-6 batch;
+  `vib_regressor` in the amendment-7 batch; the genuine `cvae` in a
+  maintainer-requested post-close-out addendum, 2026-07-08 — most accurate
+  in the table at 0.01254 but 23-26 pp under-covered, run
+  `20260708T231014Z__fdbfd21b__864001d`); `dual_vae_ft`'s declared
+  evaluation was conditional on val gates and did not run (calibration
+  regression).
 
 **Open items carried forward** (a future programme, not an amendment):
 
