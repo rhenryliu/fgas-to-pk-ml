@@ -53,3 +53,23 @@ amendment-6 primary designation is unaffected regardless of outcomes:
    semantics.
 
 Stage 6 recoverability outcome: no expectation encoded (J2.4).
+
+---
+
+# Third declaration (post-close-out addendum, maintainer-requested, 2026-07-08)
+
+Committed BEFORE the run. Exactly one configuration, comparison-only (no
+selection or tuning depends on its numbers; the amendment-6 primary
+designation is unaffected):
+
+6. **`cvae`** — the genuine Sohn-style conditional VAE
+   (`src/fgas_spk/models/cvae.py`, run config `scripts/configs/run/cvae.yaml`,
+   pinned split already) on the pinned context (tag 20260706, R < 10 crop).
+   Purpose: the same-context calibration comparison against the architecture
+   `dual_vae` was designed to replace — all historical cvae numbers are
+   superseded by the definition change and were never re-measured. Unlike the
+   `vib_regressor` row (accuracy-only by the J4.2 ruling), this row reports
+   coverage too: the cvae's spread is semantically meaningful even where
+   miscalibrated (it lacks a learned noise head; under-coverage is the
+   documented expectation — recorded here as mechanism, not as an encoded
+   outcome). One test evaluation.
