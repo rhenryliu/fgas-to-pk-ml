@@ -42,7 +42,7 @@ split:
   train_frac: 0.7
   val_frac: 0.1
   test_frac: 0.2
-  seed: 100
+  seed: 10
 
 # Held-out evaluation diagnostics (post-fit only; do not affect training).
 evaluation:
