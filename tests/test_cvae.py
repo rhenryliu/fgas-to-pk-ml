@@ -23,6 +23,17 @@ It then runs the four-part **verification gate** for the conditional VAE:
    calibrated (empirical coverage in [0.58, 0.78]) for both a heteroscedastic and
    a bimodal conditional.
 
+A final section covers the **learned observation-noise head**
+(``obs_noise_head=True``): toggled off, a default-constructed model and an
+explicit ``obs_noise_head=False`` model give bit-identical seeded predictions
+and samples; toggled on, training runs, :meth:`obs_sigma` has shape ``(n_k,)``
+and is strictly positive, :meth:`predict_samples` is seed-reproducible and
+strictly wider per example than the latent-only spread from the *same* fitted
+weights, and the 1-D ``single_k`` path works; and, the decisive calibration
+gate, on synthetic ``y = f(x) + eps`` with known homoscedastic per-k sigma the
+fitted ``obs_sigma()`` recovers the true sigma and the central-68% interval
+covers ~68% of held-out truth.
+
 Every fixture is synthetic -- no CAMELS data. The lazy-torch check runs in a fresh
 subprocess (the fit tests import torch and pytest shares ``sys.modules`` across a
 session, so an in-process assertion would be order-dependent).
@@ -509,3 +520,184 @@ def test_gate4b_coverage_is_calibrated_both_variants(_gate4_recovery):
     bimodal_covs = [cov for _r, cov in _gate4_recovery["bimodal"]]
     mean_cov = float(np.mean(bimodal_covs))
     assert 0.58 <= mean_cov <= 0.78, f"bimodal coverage {mean_cov:.3f} from {bimodal_covs}"
+
+
+# ===========================================================================
+# OBSERVATION-NOISE HEAD (obs_noise_head=True)
+# ===========================================================================
+
+def test_obs_noise_head_defaults_off_and_off_toggle_is_equivalent():
+    # obs_noise_head defaults to False, and an explicit False is bit-identical to
+    # a default construction: same seeded fit, predictions, and samples. (The
+    # before/after-edit regression on the pre-head code is run out-of-suite; this
+    # pins the in-suite equivalence the default relies on.)
+    td = _training_data(with_cond=True, n=24, n_k=5, seed=8)
+    kwargs = dict(latent_dim=4, hidden=16, n_layers=2, epochs=10, batch_size=8,
+                  seed=0, device="cpu")
+    default = Cvae(**kwargs)
+    explicit = Cvae(obs_noise_head=False, **kwargs)
+    assert default.obs_noise_head is False
+    default.fit(td)
+    explicit.fit(td)
+    np.testing.assert_array_equal(
+        default.predict(td.X, td.X_cond), explicit.predict(td.X, td.X_cond)
+    )
+    np.testing.assert_array_equal(
+        default.predict_samples(td.X, td.X_cond, n_samples=16, seed=3),
+        explicit.predict_samples(td.X, td.X_cond, n_samples=16, seed=3),
+    )
+    assert default._obs_logvar is None and explicit._obs_logvar is None
+
+
+def test_obs_noise_head_trains_and_obs_sigma_is_positive_per_k():
+    td = _training_data(with_cond=True, n=24, n_k=5, seed=9)
+    model = Cvae(
+        latent_dim=4, hidden=16, n_layers=2, epochs=20, batch_size=8,
+        obs_noise_head=True, seed=0, device="cpu",
+    )
+    model.fit(td)
+    sigma = model.obs_sigma()
+    assert sigma.shape == (td.y.shape[1],)
+    assert (sigma > 0.0).all()
+    # The head is in the optimiser: it must have moved off its init value
+    # (exp(0.5 * 0) * y_std = y_std exactly).
+    assert not np.allclose(sigma, model._y_std)
+
+
+def test_obs_sigma_raises_when_head_disabled_or_before_fit():
+    td = _training_data(with_cond=True, n=16, n_k=4)
+    off = Cvae(latent_dim=3, hidden=16, n_layers=1, epochs=2, batch_size=8,
+               seed=0, device="cpu")
+    off.fit(td)
+    with pytest.raises(RuntimeError, match="obs_noise_head"):
+        off.obs_sigma()
+    unfit = Cvae(obs_noise_head=True, seed=0, device="cpu")
+    with pytest.raises(RuntimeError, match="before fit"):
+        unfit.obs_sigma()
+
+
+def test_obs_noise_head_widens_samples_over_latent_only():
+    # From the SAME fitted weights, samples with the observation noise must be
+    # strictly wider per example than the latent-only spread (the head-off
+    # sampling path, obtained by toggling the flag on the fitted model).
+    td = _training_data(with_cond=True, n=20, n_k=5, seed=10)
+    model = Cvae(
+        latent_dim=4, hidden=16, n_layers=2, epochs=30, batch_size=8,
+        obs_noise_head=True, seed=0, device="cpu",
+    )
+    model.fit(td)
+    with_noise = model.predict_samples(td.X, td.X_cond, n_samples=200, seed=5)
+    model.obs_noise_head = False  # sampling dispatch only; weights untouched
+    latent_only = model.predict_samples(td.X, td.X_cond, n_samples=200, seed=5)
+    model.obs_noise_head = True
+    spread_on = with_noise.std(axis=0).mean(axis=1)    # (n_examples,)
+    spread_off = latent_only.std(axis=0).mean(axis=1)  # (n_examples,)
+    assert (spread_on > spread_off).all()
+
+
+def test_obs_noise_head_samples_reproducible_under_fixed_seed():
+    td = _training_data(with_cond=True, n=20, n_k=4, seed=11)
+    model = Cvae(
+        latent_dim=4, hidden=16, n_layers=2, epochs=15, batch_size=8,
+        obs_noise_head=True, seed=0, device="cpu",
+    )
+    model.fit(td)
+    s_a = model.predict_samples(td.X, td.X_cond, n_samples=16, seed=21)
+    s_b = model.predict_samples(td.X, td.X_cond, n_samples=16, seed=21)
+    np.testing.assert_array_equal(s_a, s_b)
+    s_c = model.predict_samples(td.X, td.X_cond, n_samples=16, seed=22)
+    assert not np.allclose(s_a, s_c)
+
+
+def test_obs_noise_head_single_k_path():
+    # A 1-D (single_k) target: obs_logvar has shape (1,), obs_sigma() returns
+    # (1,), and sampling keeps the (n_samples, n_examples) shape.
+    td = _training_data(with_cond=True, n=20, n_k=5, seed=12)
+    td.y = td.y[:, 0]
+    model = Cvae(
+        latent_dim=3, hidden=16, n_layers=1, epochs=5, batch_size=8,
+        obs_noise_head=True, seed=0, device="cpu",
+    )
+    model.fit(td)
+    sigma = model.obs_sigma()
+    assert sigma.shape == (1,)
+    assert (sigma > 0.0).all()
+    samples = model.predict_samples(td.X, td.X_cond, n_samples=9)
+    assert samples.shape == (9, td.X.shape[0])
+    pred = model.predict(td.X, td.X_cond)
+    assert pred.shape == (td.X.shape[0],)
+
+
+def test_nll_matches_closed_form_and_clamps():
+    # The NLL reconstruction equals 0.5 * sum_k(lv + err^2 / e^lv), batch mean,
+    # with obs_logvar clamped to [-8, 8] (GaussianVAE convention, log 2pi
+    # dropped).
+    import torch
+
+    td = _training_data(with_cond=False, n=16, n_k=3)
+    model = Cvae(latent_dim=2, hidden=8, n_layers=1, epochs=0, val_frac=0.0,
+                 obs_noise_head=True, seed=0, device="cpu")
+    model.fit(td)  # builds modules; no training steps
+    torch.manual_seed(0)
+    pred, y = torch.randn(6, 3), torch.randn(6, 3)
+    with torch.no_grad():
+        model._obs_logvar.copy_(torch.tensor([-20.0, 0.5, 20.0]))
+        got = model._nll(pred, y)
+        lv = torch.tensor([-8.0, 0.5, 8.0])  # the clamped values
+        want = (0.5 * ((pred - y).pow(2) / lv.exp() + lv).sum(dim=1)).mean()
+    assert torch.allclose(got, want, atol=1e-6)
+
+
+# --- the decisive noise-head gate: known-sigma recovery + calibration -------
+
+@pytest.fixture(scope="module")
+def _noise_head_recovery():
+    """Fit the noise-head model once on y = f(x) + eps with known per-k sigma.
+
+    Homoscedastic Gaussian noise with distinct per-k scales (0.10, 0.20) on a
+    smooth 2-D mean: the conditional spread is pure observation noise, so a
+    correct head absorbs it into ``obs_logvar`` and the latent contributes
+    little. One CPU fit at the frozen operating point (beta = 1.0 -- unlike the
+    head-off gate-4 fits, no lowered beta is needed: the aleatoric term lives in
+    the head, not the latent).
+    """
+    true_sigma = np.array([0.10, 0.20])
+    rng = np.random.default_rng(42)
+    n = 2000
+    x = rng.uniform(-1.0, 1.0, size=(n, 1))
+    f = np.hstack([0.5 * np.sin(2.0 * x) + 0.3 * x, 0.4 * np.cos(1.5 * x)])
+    y = f + rng.normal(size=(n, 2)) * true_sigma
+    order = rng.permutation(n)
+    tr, ho = order[: int(0.8 * n)], order[int(0.8 * n):]
+    td = TrainingData(
+        X=x[tr], X_cond=None, X_params=None, y=y[tr], nd=np.zeros(tr.size),
+        sim_index=np.arange(tr.size), k=np.linspace(0.5, 5.0, 2),
+        radii_mpch=np.array([0.1]), source_path="synthetic",
+    )
+    model = Cvae(
+        latent_dim=2, hidden=64, n_layers=2, epochs=300, lr=1e-3, beta=1.0,
+        batch_size=128, val_frac=0.1, obs_noise_head=True, seed=0, device="cpu",
+    )
+    model.fit(td)
+    samples = model.predict_samples(x[ho], n_samples=300, seed=123)
+    lo = np.quantile(samples, 0.16, axis=0)
+    hi = np.quantile(samples, 0.84, axis=0)
+    coverage = float(np.mean((y[ho] >= lo) & (y[ho] <= hi)))
+    return {"model": model, "true_sigma": true_sigma, "coverage": coverage}
+
+
+def test_noise_head_recovers_known_sigma(_noise_head_recovery):
+    # obs_sigma() recovers the true homoscedastic per-k sigma. The learned scale
+    # also absorbs the (small) mean-fit residual, so the tolerance is one-sided
+    # -friendly: within [0.8, 1.3] of truth per k bin.
+    sigma = _noise_head_recovery["model"].obs_sigma()
+    true_sigma = _noise_head_recovery["true_sigma"]
+    ratio = sigma / true_sigma
+    assert ratio.shape == (2,)
+    assert (0.8 <= ratio).all() and (ratio <= 1.3).all(), f"sigma ratio {ratio}"
+
+
+def test_noise_head_central_interval_is_calibrated(_noise_head_recovery):
+    # Held-out central-68% coverage ~ 0.68 (same band as the gate-4 checks).
+    coverage = _noise_head_recovery["coverage"]
+    assert 0.58 <= coverage <= 0.78, f"held-out 68% coverage {coverage:.3f}"

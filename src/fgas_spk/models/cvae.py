@@ -50,6 +50,38 @@ epochs (default ``epochs // 4``). Gradients are clipped to a max norm of 1.0
 between ``backward`` and the step; the optimiser (AdamW when ``weight_decay > 0``,
 else Adam) spans **all three** networks' parameters.
 
+**Optional learned observation-noise head (``obs_noise_head=True``; default
+off).** The squared-error ``recon`` above carries **no aleatoric term**: all
+predictive spread comes from the latent, which is the diagnosed cause of this
+model's under-coverage. With the head enabled the model mirrors
+:class:`~fgas_spk.models.dual_vae_components.GaussianVAE`'s noise head: a
+learnable per-k parameter ``obs_logvar`` of shape ``(n_k,)`` (``(1,)`` for a 1-D
+``single_k`` target), initialised to 0.0 (unit variance on the standardised
+scale) and clamped to ``[-8, 8]`` inside the loss, joins the optimiser and the
+best-epoch snapshot/restore alongside the three networks, and the reconstruction
+term becomes the Gaussian negative log-likelihood on the standardised scale::
+
+    recon = mean_batch 0.5 * sum_k ( obs_logvar_k
+                                     + (decode(z, x, ctx) - y)_k^2 / e^{obs_logvar_k} )
+
+(the additive ``log 2*pi`` constant is dropped, consistently in both the training
+loss and the held-out ``val_loss``, so it never affects best-epoch selection).
+The held-out ``val_loss`` uses the same NLL with the terminal ``beta``.
+:meth:`predict` is unchanged (the deterministic prior-mean decode);
+:meth:`predict_samples` adds, per decoded draw, seeded Gaussian observation noise
+``eps ~ N(0, e^{0.5 * obs_logvar})`` on the standardised scale before the target
+standardisation is inverted, so its spread carries the aleatoric term the
+toggled-off model lacks; :meth:`obs_sigma` exposes the fitted noise on the raw
+SP(k) scale (``e^{0.5 * obs_logvar} * y_std``). With the head **off**, behaviour
+is exactly the pre-head model (same loss, same sampling, same seeded results).
+
+**Caveat -- ``beta`` semantics differ between the two modes.** Swapping the
+squared-error sum for the NLL rescales the reconstruction term relative to the
+KL (at the ``obs_logvar = 0`` init the NLL's error term is *half* the squared
+-error sum, and it shrinks further as the noise scale grows), so a given
+``beta`` weights the KL differently with the head on than off. Do not transfer
+a tuned ``beta`` across modes without re-checking.
+
 **Internal validation and best-epoch restore.** As in
 :mod:`~fgas_spk.models.vib_regressor`: ``val_frac`` (default 0.1) of the rows are
 held out by a seeded shuffle (``ceil(val_frac * n)`` rows), the per-epoch
@@ -78,7 +110,8 @@ informative latent shows ``latent_gap > 0`` and ``kl > 0``.
   Jensen); for a mildly non-linear decoder it is a close, and by far the cheapest,
   point summary.
 - :meth:`predict_samples` draws ``z ~ N(mu_p, e^{logvar_p})`` from the conditional
-  prior and decodes each draw, so the across-sample spread estimates ``p(y | x)``.
+  prior and decodes each draw (plus, with the noise head on, per-draw Gaussian
+  observation noise), so the across-sample spread estimates ``p(y | x)``.
 - :meth:`latents` returns ``mu_p`` by default, or the recognition code ``mu_q``
   when a target ``y`` is supplied.
 
@@ -156,6 +189,12 @@ class Cvae:
             best-epoch selection (seeded shuffle, ``ceil(val_frac * n)`` rows).
             ``0`` disables validation (train on all rows, keep the final weights).
             Defaults to 0.1.
+        obs_noise_head (bool): Enable the learned per-k observation-noise head:
+            a learnable ``obs_logvar`` of shape ``(n_k,)`` turns the
+            reconstruction term into a Gaussian NLL and adds seeded observation
+            noise to :meth:`predict_samples` (see the module docstring, including
+            the ``beta``-semantics caveat). Off (the default) reproduces the
+            pre-head model exactly. Defaults to False.
         seed (int): Reproducibility seed; from ``RunConfig.seed`` in a real run.
             Threaded into :func:`torch.manual_seed`, the validation-holdout shuffle,
             and the default :meth:`predict_samples` sampling seed. Defaults to 0.
@@ -171,6 +210,9 @@ class Cvae:
             ``latent_gap`` (see the module docstring; ``latent_gap ~ 0`` with
             ``kl ~ 0`` flags a non-informative latent -- collapse or genuine
             conditional determinism, told apart by the coverage diagnostics).
+            With ``obs_noise_head`` the ``recon`` / ``recon_prior`` entries are
+            the Gaussian NLL, not the squared-error sum -- do not compare their
+            values across the two modes.
         best_epoch (int | None): Epoch of lowest ``val_loss`` whose weights were
             restored, or ``None`` when ``val_frac == 0``.
     """
@@ -188,6 +230,7 @@ class Cvae:
         beta: float = 1.0,
         anneal_epochs: int | None = None,
         val_frac: float = 0.1,
+        obs_noise_head: bool = False,
         seed: int = 0,
         device: str | None = None,
         **_: object,
@@ -207,6 +250,7 @@ class Cvae:
         # quarter of the schedule; a non-positive value disables annealing.
         self.anneal_epochs = epochs // 4 if anneal_epochs is None else anneal_epochs
         self.val_frac = val_frac
+        self.obs_noise_head = obs_noise_head
         self.seed = seed
         self.device = device
 
@@ -216,6 +260,7 @@ class Cvae:
         self._recognition = None
         self._prior = None
         self._decoder = None
+        self._obs_logvar = None  # torch.nn.Parameter (n_k,), std scale; head only
         self._device = None
         self._uses_cond: bool = False
         self._uses_params: bool = False
@@ -337,6 +382,8 @@ class Cvae:
             + list(self._prior.parameters())
             + list(self._decoder.parameters())
         )
+        if self.obs_noise_head:
+            params.append(self._obs_logvar)
         if self.weight_decay > 0:
             optimizer = torch.optim.AdamW(
                 params, lr=self.lr, weight_decay=self.weight_decay
@@ -364,7 +411,7 @@ class Cvae:
                 # Reparameterised sample from the posterior at train time.
                 z = self._reparameterise(mu_q, logvar_q)
                 pred = self._decode(z, xb, cb)
-                recon = self._recon(pred, yb)
+                recon = self._recon_loss(pred, yb)
                 mu_p, logvar_p = self._prior_dist(xb, cb)
                 kl = self._kl(mu_q, logvar_q, mu_p, logvar_p)
                 loss = recon + beta_eff * kl
@@ -382,16 +429,18 @@ class Cvae:
             with torch.no_grad():
                 mu_q_tr, logvar_q_tr = self._recognition_dist(X_tr, y_tr, c_tr)
                 mu_p_tr, logvar_p_tr = self._prior_dist(X_tr, c_tr)
-                recon_tr = float(self._recon(self._decode(mu_q_tr, X_tr, c_tr), y_tr).item())
+                recon_tr = float(
+                    self._recon_loss(self._decode(mu_q_tr, X_tr, c_tr), y_tr).item()
+                )
                 recon_prior_tr = float(
-                    self._recon(self._decode(mu_p_tr, X_tr, c_tr), y_tr).item()
+                    self._recon_loss(self._decode(mu_p_tr, X_tr, c_tr), y_tr).item()
                 )
                 kl_tr = float(self._kl(mu_q_tr, logvar_q_tr, mu_p_tr, logvar_p_tr).item())
                 if use_val:
                     mu_q_va, logvar_q_va = self._recognition_dist(X_va, y_va, c_va)
                     mu_p_va, logvar_p_va = self._prior_dist(X_va, c_va)
                     recon_va = float(
-                        self._recon(self._decode(mu_q_va, X_va, c_va), y_va).item()
+                        self._recon_loss(self._decode(mu_q_va, X_va, c_va), y_va).item()
                     )
                     kl_va = float(
                         self._kl(mu_q_va, logvar_q_va, mu_p_va, logvar_p_va).item()
@@ -422,12 +471,17 @@ class Cvae:
                     "prior": copy.deepcopy(self._prior.state_dict()),
                     "decoder": copy.deepcopy(self._decoder.state_dict()),
                 }
+                if self.obs_noise_head:
+                    best_state["obs_logvar"] = self._obs_logvar.detach().clone()
 
         # Restore the best-validation weights (no-op when val_frac == 0).
         if best_state is not None:
             self._recognition.load_state_dict(best_state["recognition"])
             self._prior.load_state_dict(best_state["prior"])
             self._decoder.load_state_dict(best_state["decoder"])
+            if self.obs_noise_head:
+                with torch.no_grad():
+                    self._obs_logvar.copy_(best_state["obs_logvar"])
 
     def predict(
         self,
@@ -492,15 +546,20 @@ class Cvae:
 
         For each example this draws ``n_samples`` latents ``z ~ p(z | x, ctx) =
         N(mu_p, exp(logvar_p))`` from the conditional prior, decodes each, and
-        inverts the target standardisation. The spread **across the sample axis**
-        (axis 0) estimates ``p(y | x)``: how much a given f_gas(R) profile leaves
-        SP(k) underdetermined. Not part of the
+        inverts the target standardisation. With ``obs_noise_head`` enabled, each
+        decoded draw additionally receives Gaussian observation noise ``eps ~
+        N(0, exp(0.5 * obs_logvar))`` on the standardised scale (before the
+        inversion), so the spread carries the learned aleatoric term as well as
+        the latent one. The spread **across the sample axis** (axis 0) estimates
+        ``p(y | x)``: how much a given f_gas(R) profile leaves SP(k)
+        underdetermined. Not part of the
         :class:`~fgas_spk.models.base.ProfileToSpk` protocol.
 
         The sampling is seeded (default: the model ``seed``) via a CPU
-        :class:`torch.Generator`, with ``eps`` moved to the working device, so it is
-        reproducible on a fixed backend and MPS-safe. Dropout is disabled here, so
-        all stochasticity comes from the latent.
+        :class:`torch.Generator`, with ``eps`` (latent and, when enabled,
+        observation) moved to the working device, so it is reproducible on a fixed
+        backend and MPS-safe. Dropout is disabled here, so all stochasticity comes
+        from the latent (and the observation noise, when enabled).
 
         Args:
             X (np.ndarray): Gas-fraction profiles, shape (n_examples, n_radii).
@@ -563,13 +622,48 @@ class Cvae:
             else:
                 cond_flat = None
             out = self._decode(z_flat, x_flat, cond_flat)  # (S * N, n_k)
-        out = out.detach().cpu().numpy().reshape(n_samples, n_examples, -1)
+            out = out.reshape(n_samples, n_examples, -1)
+            if self.obs_noise_head:
+                # Learned observation noise, per decoded draw, on the
+                # standardised scale -- drawn from the same seeded CPU generator
+                # as the latent eps (after it, so toggled-off draws are
+                # unchanged) and moved to the working device (MPS-safe).
+                eps_obs = torch.randn(out.shape, generator=gen).to(self._device)
+                out = out + eps_obs * torch.exp(0.5 * self._obs_logvar)
+        out = out.detach().cpu().numpy()
 
         assert self._y_mean is not None and self._y_std is not None
         samples = self._invert_norm(out, self._y_mean, self._y_std)
         if self._y_was_1d:
             samples = samples[..., 0]  # (n_samples, n_examples)
         return samples
+
+    def obs_sigma(self) -> np.ndarray:
+        """Fitted per-k observation noise on the **raw** SP(k) scale.
+
+        ``obs_logvar`` lives on the standardised target scale (init 0.0 = one
+        per-k standard deviation), so the raw-scale noise is
+        ``exp(0.5 * obs_logvar) * y_std``, mirroring
+        :meth:`~fgas_spk.models.dual_vae_components.GaussianVAE.obs_sigma`.
+
+        Returns:
+            np.ndarray: Noise sigma per k bin, shape (n_k,) -- ``(1,)`` for a
+                1-D ``single_k`` target.
+
+        Raises:
+            RuntimeError: If the model was constructed with
+                ``obs_noise_head=False``, or if called before :meth:`fit`.
+        """
+        if not self.obs_noise_head:
+            raise RuntimeError(
+                "Cvae.obs_sigma requires obs_noise_head=True; this model was "
+                "constructed without the observation-noise head."
+            )
+        if self._obs_logvar is None:
+            raise RuntimeError("Cvae.obs_sigma called before fit.")
+        assert self._y_std is not None
+        std_scale = np.exp(0.5 * self._obs_logvar.detach().cpu().numpy())
+        return std_scale * self._y_std
 
     def latents(
         self,
@@ -640,6 +734,10 @@ class Cvae:
           head is zero-initialised so the prior starts at unit variance.
         - decoder ``p(y|z,x,ctx)``: ``latent + n_profile + n_context -> n_k`` -- the
           decoder consumes the profile directly, not only the context.
+        - with ``obs_noise_head``: the learnable ``obs_logvar`` parameter of shape
+          ``(n_k,)``, initialised to 0.0 (unit variance on the standardised
+          scale), mirroring
+          :class:`~fgas_spk.models.dual_vae_components.GaussianVAE`.
 
         ``n_context`` is the combined width of the conditioning modalities
         (``X_cond`` plus ``X_params``); 0 on the profile-only path.
@@ -649,6 +747,14 @@ class Cvae:
         self._recognition = self._mlp(n_profile + n_k + n_context, 2 * self.latent_dim)
         self._prior = self._mlp(n_profile + n_context, 2 * self.latent_dim)
         self._decoder = self._mlp(self.latent_dim + n_profile + n_context, n_k)
+
+        # Optional per-k observation-noise head (torch.zeros consumes no RNG, so
+        # building it leaves the seeded initialisation of the networks -- and
+        # therefore the toggled-off training trajectory -- untouched).
+        if self.obs_noise_head:
+            self._obs_logvar = torch.nn.Parameter(
+                torch.zeros(n_k, device=self._device)
+            )
 
         # Zero-init the prior's logvar head (the second latent_dim outputs of the
         # final layer) so logvar_p == 0 for every input at epoch 0 -- a unit-variance
@@ -716,6 +822,19 @@ class Cvae:
         eps = torch.randn_like(std)
         return mu + std * eps
 
+    def _recon_loss(self, pred, y):
+        """Reconstruction term for the configured mode (see the module docstring).
+
+        Dispatches to the Gaussian NLL :meth:`_nll` when ``obs_noise_head`` is
+        enabled, else to the original squared-error :meth:`_recon` -- one call
+        site for the training loss, the per-epoch trace, and the held-out
+        ``val_loss``, so both modes select their best epoch on their own
+        reconstruction convention. Returns a scalar tensor.
+        """
+        if self.obs_noise_head:
+            return self._nll(pred, y)
+        return self._recon(pred, y)
+
     @staticmethod
     def _recon(pred, y):
         """Reconstruction term: squared error summed over ``n_k``, mean over batch.
@@ -725,6 +844,20 @@ class Cvae:
         convention. Returns a scalar tensor.
         """
         return ((pred - y) ** 2).sum(dim=1).mean()
+
+    def _nll(self, pred, y):
+        """Gaussian NLL reconstruction with the learned observation noise.
+
+        ``mean_batch 0.5 * sum_k( obs_logvar_k + (pred - y)_k^2 /
+        e^{obs_logvar_k} )``, with ``obs_logvar`` clamped to ``[-8, 8]`` as in
+        :class:`~fgas_spk.models.dual_vae_components.GaussianVAE`. The additive
+        ``log 2*pi`` constant is dropped (consistently in the training loss and
+        ``val_loss``; it cannot affect optimisation or best-epoch selection).
+        Returns a scalar tensor.
+        """
+        lv = self._obs_logvar.clamp(-8.0, 8.0)
+        per_example = 0.5 * ((pred - y).pow(2) / lv.exp() + lv).sum(dim=1)
+        return per_example.mean()
 
     @staticmethod
     def _kl(mu_q, logvar_q, mu_p, logvar_p):
