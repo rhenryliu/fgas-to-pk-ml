@@ -1,0 +1,45 @@
+# RunConfig for the dual_vae composite, all-2D exploration: (codec_x, codec_y)
+# = (pca d=2, vae ld=2). COMPARISON arm of the post-close-out 2D-latent
+# exploration (maintainer request, 2026-07-09) on the tag-20260708 context —
+# this is NOT the declared Arm P primary (dual_vae_pca_vae.yaml, PCA d=4 /
+# ld_y=3) and carries no test declaration; the committed programme primary is
+# unchanged. All hyperparameters besides the two latent dimensions match the
+# committed arm config (beta_x is inert for a pca codec).
+#
+#     python scripts/run.py --config-data scripts/configs/data/config_dual_vae.yaml \
+#                           --config-run  scripts/configs/run/dual_vae_pca_vae_ld2.yaml
+
+model: dual_vae               # registry name (fgas_spk.models.REGISTRY)
+model_params:
+  codec_x: pca
+  codec_y: vae
+  latent_dim_x: 2             # 2D exploration (committed Arm P uses PCA d=4)
+  latent_dim_y: 2             # 2D exploration (staged selection is 3)
+  beta_x: 0.01
+  beta_y: 1.0e-4
+  hidden: 128
+  n_layers: 2
+  epochs: 5000                # VAE codec schedule (best-epoch restore inside)
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  dropout: 0.0
+  batch_size: 128
+  anneal_epochs: null         # -> epochs // 4, linear KL warm-up
+  val_frac: 0.1               # internal holdout for best-epoch restore
+  mapping: mdn                # rung 3 (probabilistic; predict_samples enabled)
+  mdn_components: 3
+  map_epochs: 2000
+
+seed: 0
+
+# Pinned grouped-by-sim_index split (identical across every dual-VAE stage).
+split:
+  train_frac: 0.7
+  val_frac: 0.1
+  test_frac: 0.2
+  seed: 100
+
+evaluation:
+  suppressed_thresholds: [0.95, 0.9, 0.8]
+
+write_root: null

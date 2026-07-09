@@ -1,0 +1,32 @@
+model: dual_vae
+model_params:
+  codec_x: vae
+  codec_y: vae
+  latent_dim_x: 2
+  latent_dim_y: 2
+  beta_x: 0.01
+  beta_y: 0.0001
+  hidden: 128
+  n_layers: 2
+  epochs: 5000
+  lr: 0.001
+  weight_decay: 0.0001
+  dropout: 0.0
+  batch_size: 128
+  anneal_epochs: null
+  val_frac: 0.1
+  mapping: mdn
+  mdn_components: 3
+  map_epochs: 2000
+seed: 0
+split:
+  train_frac: 0.7
+  val_frac: 0.1
+  test_frac: 0.2
+  seed: 100
+evaluation:
+  suppressed_thresholds:
+  - 0.95
+  - 0.9
+  - 0.8
+write_root: null
