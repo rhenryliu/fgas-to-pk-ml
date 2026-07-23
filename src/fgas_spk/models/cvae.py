@@ -75,6 +75,28 @@ toggled-off model lacks; :meth:`obs_sigma` exposes the fitted noise on the raw
 SP(k) scale (``e^{0.5 * obs_logvar} * y_std``). With the head **off**, behaviour
 is exactly the pre-head model (same loss, same sampling, same seeded results).
 
+**Post-hoc calibration of the noise head (``obs_calibrate_on_val``).** Trained by
+the ELBO alone, ``obs_logvar`` is fitted to the *training* residuals and descends
+slowly from its zero init, so the predictive intervals come out badly scaled --
+measured over-coverage of 0.98 at a nominal 0.68. This opt-in lever corrects the
+scale after the fact; it defaults to the pre-existing behaviour.
+
+``obs_calibrate_on_val`` (default False) refits ``obs_logvar`` **in closed form
+after training**, on the internal validation holdout, so the predictive variance
+matches the residual scatter on data the weights were not fitted to::
+
+    obs_var_k = mean_val[(y - mean_s decode(z_s))_k^2] - mean_val[var_s decode(z_s)_k]
+
+(clamped below at :data:`_OBS_VAR_FLOOR`), i.e. the total predictive variance is
+matched to the held-out residual variance and the latent's own contribution is
+subtracted so it is not double-counted. This is the lever that matters for
+coverage: the NLL fits sigma to the *training* residuals, and because the model
+overfits, a fully-converged training-fit sigma is systematically too small on
+unseen data and under-covers. Requires ``val_frac > 0``; it is a no-op with a
+warning otherwise. Note the holdout is also the best-epoch selection criterion,
+so the calibration carries mild optimism -- it is nonetheless far closer to
+honest than the training fit.
+
 **Caveat -- ``beta`` semantics differ between the two modes.** Swapping the
 squared-error sum for the NLL rescales the reconstruction term relative to the
 KL (at the ``obs_logvar = 0`` init the NLL's error term is *half* the squared
@@ -142,6 +164,7 @@ from __future__ import annotations
 
 import copy
 import math
+import warnings
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -150,6 +173,17 @@ from fgas_spk.models.base import register
 
 if TYPE_CHECKING:  # import only for type hints; never pulls torch/loader at runtime
     from fgas_spk.loader import TrainingData
+
+# Lower bound on the calibrated observation variance, on the standardised target
+# scale (1.0 = one target standard deviation). Guards the closed-form
+# val-calibration against a non-positive variance when the latent's own spread
+# already exceeds the residual scatter in some k bin; 1e-6 corresponds to
+# sigma = 1e-3 of a target sd, far below any resolvable predictive width.
+_OBS_VAR_FLOOR = 1e-6
+# Decoded draws used by the closed-form val calibration. Matches the runner's
+# _N_PREDICTIVE_SAMPLES so the calibration and the coverage diagnostic estimate
+# the same quantity at the same Monte-Carlo precision.
+_N_CALIBRATION_SAMPLES = 200
 
 
 @register("cvae")
@@ -195,6 +229,11 @@ class Cvae:
             noise to :meth:`predict_samples` (see the module docstring, including
             the ``beta``-semantics caveat). Off (the default) reproduces the
             pre-head model exactly. Defaults to False.
+        obs_calibrate_on_val (bool): Refit ``obs_logvar`` in closed form on the
+            internal validation holdout after training, matching the predictive
+            variance to the held-out residual scatter (see the module
+            docstring). Requires ``val_frac > 0``; warns and no-ops otherwise.
+            Ignored when ``obs_noise_head`` is False. Defaults to False.
         seed (int): Reproducibility seed; from ``RunConfig.seed`` in a real run.
             Threaded into :func:`torch.manual_seed`, the validation-holdout shuffle,
             and the default :meth:`predict_samples` sampling seed. Defaults to 0.
@@ -231,6 +270,7 @@ class Cvae:
         anneal_epochs: int | None = None,
         val_frac: float = 0.1,
         obs_noise_head: bool = False,
+        obs_calibrate_on_val: bool = False,
         seed: int = 0,
         device: str | None = None,
         **_: object,
@@ -251,6 +291,7 @@ class Cvae:
         self.anneal_epochs = epochs // 4 if anneal_epochs is None else anneal_epochs
         self.val_frac = val_frac
         self.obs_noise_head = obs_noise_head
+        self.obs_calibrate_on_val = obs_calibrate_on_val
         self.seed = seed
         self.device = device
 
@@ -482,6 +523,69 @@ class Cvae:
             if self.obs_noise_head:
                 with torch.no_grad():
                     self._obs_logvar.copy_(best_state["obs_logvar"])
+
+        # Closed-form recalibration of the noise head on the validation holdout,
+        # AFTER the best-epoch restore so it calibrates the weights that ship.
+        if self.obs_noise_head and self.obs_calibrate_on_val:
+            if use_val:
+                self._calibrate_obs_logvar(X_va, y_va, c_va)
+            else:
+                warnings.warn(
+                    "Cvae: obs_calibrate_on_val requires val_frac > 0; the "
+                    "noise head was left at its trained value.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+
+    def _calibrate_obs_logvar(self, X_va, y_va, c_va, n_samples: int = _N_CALIBRATION_SAMPLES) -> None:
+        """Refit ``obs_logvar`` so the predictive variance matches val residuals.
+
+        Sets, per k bin and on the standardised target scale,
+        ``obs_var_k = mean_val[(y - mean_s decode)_k^2] - mean_val[var_s decode_k]``
+        clamped below at :data:`_OBS_VAR_FLOOR`: the total predictive variance is
+        matched to the held-out residual variance, with the latent's own
+        contribution subtracted so it is not counted twice. Sampling reuses the
+        seeded-CPU-generator convention of :meth:`predict_samples`, so the result
+        is reproducible on a fixed backend.
+
+        Args:
+            X_va: Standardised validation profiles, shape ``(n_val, n_profile)``.
+            y_va: Standardised validation target, shape ``(n_val, n_k)``.
+            c_va: Standardised validation context, or None on the profile-only path.
+            n_samples (int): Decoded draws per row. Defaults to
+                :data:`_N_CALIBRATION_SAMPLES`.
+        """
+        import torch
+
+        assert self._obs_logvar is not None
+        self._eval_mode()
+        gen = torch.Generator(device="cpu")
+        gen.manual_seed(int(self.seed))
+        with torch.no_grad():
+            mu_p, logvar_p = self._prior_dist(X_va, c_va)
+            std = torch.exp(0.5 * logvar_p)
+            n_rows, latent_dim = mu_p.shape
+            eps = torch.randn(
+                (n_samples, n_rows, latent_dim), generator=gen
+            ).to(self._device)
+            z = (mu_p.unsqueeze(0) + std.unsqueeze(0) * eps).reshape(
+                n_samples * n_rows, latent_dim
+            )
+            x_flat = X_va.unsqueeze(0).expand(n_samples, -1, -1).reshape(
+                n_samples * n_rows, X_va.shape[1]
+            )
+            if c_va is not None:
+                c_flat = c_va.unsqueeze(0).expand(n_samples, -1, -1).reshape(
+                    n_samples * n_rows, c_va.shape[1]
+                )
+            else:
+                c_flat = None
+            dec = self._decode(z, x_flat, c_flat).reshape(n_samples, n_rows, -1)
+            mean_pred = dec.mean(dim=0)  # (n_val, n_k)
+            latent_var = dec.var(dim=0, unbiased=True).mean(dim=0)  # (n_k,)
+            resid_var = ((y_va - mean_pred) ** 2).mean(dim=0)  # (n_k,)
+            obs_var = (resid_var - latent_var).clamp_min(_OBS_VAR_FLOOR)
+            self._obs_logvar.copy_(torch.log(obs_var))
 
     def predict(
         self,

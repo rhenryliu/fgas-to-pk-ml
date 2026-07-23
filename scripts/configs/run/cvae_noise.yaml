@@ -27,7 +27,7 @@
 
 model: cvae                   # registry name (fgas_spk.models.REGISTRY)
 model_params:
-  latent_dim: 4               # width of the stochastic latent
+  latent_dim: 2               # width of the stochastic latent
   hidden: 128                 # modest width: favour regularisation over capacity
   n_layers: 2                 # hidden layers in each of the three networks
   epochs: 200
