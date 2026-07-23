@@ -97,6 +97,32 @@ warning otherwise. Note the holdout is also the best-epoch selection criterion,
 so the calibration carries mild optimism -- it is nonetheless far closer to
 honest than the training fit.
 
+**Observation likelihood (``obs_likelihood``, ``obs_df``).** The noise head's
+likelihood is selectable: ``"gaussian"`` (the default, and the well-tested path)
+or ``"student_t"``. The motivation is measured, not aesthetic -- after the val
+calibration above the predictive *variance* is correctly matched (sd of the
+standardised residual ~1.1) yet the residuals have kurtosis ~38, so a Gaussian
+must simultaneously over-cover the bulk and under-cover the tail. No scale
+fixes a shape mismatch; a heavier-tailed likelihood can.
+
+Under ``"student_t"`` the reconstruction term becomes the Student-t NLL with
+location ``decode(z, x, ctx)``, scale ``e^{0.5 * obs_logvar}`` and degrees of
+freedom ``nu`` (see :meth:`Cvae._nll_student_t`), :meth:`predict_samples` draws
+t-distributed observation noise via the scale mixture ``t = z / sqrt(g/nu)``
+(``z ~ N(0,1)``, ``g ~ chi^2(nu)``), and the val calibration fits the t by
+maximum likelihood instead of matching a variance. ``obs_df`` sets ``nu``: a
+float pins it (default 5.0), None learns a per-k ``nu`` as
+``_MIN_DF + _DF_FLOOR + softplus(raw)``, which is strictly greater than 2 so the
+predictive variance stays finite. ``obs_df <= 2`` raises at construction.
+
+Two consequences worth stating plainly. **The t-NLL keeps its normalising
+constants** (they depend on ``nu``, so dropping them would bias a learned ``nu``)
+while the Gaussian NLL drops ``log 2*pi`` -- so ``val_loss`` is comparable
+*within* a likelihood but **not across the two**. And :meth:`obs_sigma` returns
+the *scale*, which equals the standard deviation only in the Gaussian case; use
+:meth:`obs_predictive_sd` for the standard deviation and :meth:`obs_fitted_df`
+for the fitted ``nu``.
+
 **Caveat -- ``beta`` semantics differ between the two modes.** Swapping the
 squared-error sum for the NLL rescales the reconstruction term relative to the
 KL (at the ``obs_logvar = 0`` init the NLL's error term is *half* the squared
@@ -180,6 +206,15 @@ if TYPE_CHECKING:  # import only for type hints; never pulls torch/loader at run
 # already exceeds the residual scatter in some k bin; 1e-6 corresponds to
 # sigma = 1e-3 of a target sd, far below any resolvable predictive width.
 _OBS_VAR_FLOOR = 1e-6
+# Supported observation likelihoods for the noise head.
+_OBS_LIKELIHOODS = ("gaussian", "student_t")
+# Smallest admissible degrees of freedom. The Student-t variance is
+# sigma^2 * nu / (nu - 2), so nu must exceed 2 for a finite predictive variance
+# (and hence for the val calibration and obs_predictive_sd to be defined).
+_MIN_DF = 2.0
+# Learned nu is parameterised as nu = _MIN_DF + _DF_FLOOR + softplus(raw) so it
+# stays strictly above _MIN_DF; the floor keeps nu off the singular boundary.
+_DF_FLOOR = 0.1
 # Decoded draws used by the closed-form val calibration. Matches the runner's
 # _N_PREDICTIVE_SAMPLES so the calibration and the coverage diagnostic estimate
 # the same quantity at the same Monte-Carlo precision.
@@ -229,6 +264,16 @@ class Cvae:
             noise to :meth:`predict_samples` (see the module docstring, including
             the ``beta``-semantics caveat). Off (the default) reproduces the
             pre-head model exactly. Defaults to False.
+        obs_likelihood (str): Observation likelihood for the noise head, one of
+            ``"gaussian"`` (default, the well-tested path) or ``"student_t"``
+            (heavier tails; see the module docstring). Ignored when
+            ``obs_noise_head`` is False. Raises ValueError otherwise.
+        obs_df (float | None): Degrees of freedom ``nu`` for the Student-t.
+            A float pins it (default 5.0); None learns a per-k ``nu``. Must
+            exceed 2 so the predictive variance is finite -- raises otherwise.
+            Unused when ``obs_likelihood="gaussian"``. Note this is the
+            *hyperparameter*; the fitted value is read via
+            :meth:`obs_fitted_df`.
         obs_calibrate_on_val (bool): Refit ``obs_logvar`` in closed form on the
             internal validation holdout after training, matching the predictive
             variance to the held-out residual scatter (see the module
@@ -270,6 +315,8 @@ class Cvae:
         anneal_epochs: int | None = None,
         val_frac: float = 0.1,
         obs_noise_head: bool = False,
+        obs_likelihood: str = "gaussian",
+        obs_df: float | None = 5.0,
         obs_calibrate_on_val: bool = False,
         seed: int = 0,
         device: str | None = None,
@@ -291,6 +338,18 @@ class Cvae:
         self.anneal_epochs = epochs // 4 if anneal_epochs is None else anneal_epochs
         self.val_frac = val_frac
         self.obs_noise_head = obs_noise_head
+        if obs_likelihood not in _OBS_LIKELIHOODS:
+            raise ValueError(
+                f"obs_likelihood must be in {_OBS_LIKELIHOODS}; got "
+                f"{obs_likelihood!r}."
+            )
+        if obs_df is not None and obs_df <= _MIN_DF:
+            raise ValueError(
+                f"obs_df must exceed {_MIN_DF} for a finite predictive variance; "
+                f"got {obs_df!r}. Pass None to learn it instead."
+            )
+        self.obs_likelihood = obs_likelihood
+        self.obs_df = obs_df
         self.obs_calibrate_on_val = obs_calibrate_on_val
         self.seed = seed
         self.device = device
@@ -302,6 +361,7 @@ class Cvae:
         self._prior = None
         self._decoder = None
         self._obs_logvar = None  # torch.nn.Parameter (n_k,), std scale; head only
+        self._obs_raw_df = None  # torch.nn.Parameter (n_k,); learned-nu case only
         self._device = None
         self._uses_cond: bool = False
         self._uses_params: bool = False
@@ -425,6 +485,8 @@ class Cvae:
         )
         if self.obs_noise_head:
             params.append(self._obs_logvar)
+            if self._obs_raw_df is not None:
+                params.append(self._obs_raw_df)
         if self.weight_decay > 0:
             optimizer = torch.optim.AdamW(
                 params, lr=self.lr, weight_decay=self.weight_decay
@@ -582,10 +644,85 @@ class Cvae:
                 c_flat = None
             dec = self._decode(z, x_flat, c_flat).reshape(n_samples, n_rows, -1)
             mean_pred = dec.mean(dim=0)  # (n_val, n_k)
-            latent_var = dec.var(dim=0, unbiased=True).mean(dim=0)  # (n_k,)
-            resid_var = ((y_va - mean_pred) ** 2).mean(dim=0)  # (n_k,)
-            obs_var = (resid_var - latent_var).clamp_min(_OBS_VAR_FLOOR)
-            self._obs_logvar.copy_(torch.log(obs_var))
+            if self.obs_likelihood == "student_t":
+                # Fit the t by maximum likelihood on the val residuals directly.
+                # The predictive law is a convolution of the latent-induced
+                # spread with the t noise and has no closed form, so unlike the
+                # Gaussian branch the latent variance is NOT subtracted -- it is
+                # absorbed into the fitted scale. With the latent contributing a
+                # measured ~2% of predictive variance that is a small, documented
+                # double-count, preferred over a subtraction that is not valid
+                # for a heavy-tailed law.
+                resid = (y_va - mean_pred).cpu().numpy()
+                obs_var, nu = self._fit_student_t(resid)
+                self._obs_logvar.copy_(
+                    torch.as_tensor(np.log(obs_var), dtype=self._obs_logvar.dtype,
+                                    device=self._device)
+                )
+                if self._obs_raw_df is not None:
+                    # Invert nu = _MIN_DF + _DF_FLOOR + softplus(raw).
+                    excess = np.maximum(nu - _MIN_DF - _DF_FLOOR, 1e-6)
+                    raw = np.log(np.expm1(np.minimum(excess, 30.0)))
+                    self._obs_raw_df.copy_(
+                        torch.as_tensor(raw, dtype=self._obs_raw_df.dtype,
+                                        device=self._device)
+                    )
+            else:
+                latent_var = dec.var(dim=0, unbiased=True).mean(dim=0)  # (n_k,)
+                resid_var = ((y_va - mean_pred) ** 2).mean(dim=0)  # (n_k,)
+                obs_var_t = (resid_var - latent_var).clamp_min(_OBS_VAR_FLOOR)
+                self._obs_logvar.copy_(torch.log(obs_var_t))
+
+    def _fit_student_t(self, resid: np.ndarray):
+        """Maximum-likelihood ``(scale^2, nu)`` per k bin for val residuals.
+
+        The scale is fitted for a known ``nu`` by the standard EM fixed point
+        ``var <- mean_i w_i r_i^2``, ``w_i = (nu+1)/(nu + r_i^2/var)``, which
+        downweights outliers exactly as the t likelihood does. When ``obs_df`` is
+        fixed, that is the whole fit. When ``obs_df`` is None, ``nu`` is chosen
+        per k by a log-spaced grid search maximising the profile log-likelihood
+        (a grid, not a gradient step, so it cannot diverge and needs no extra
+        dependency).
+
+        Args:
+            resid (np.ndarray): Validation residuals ``y - mean_pred``, shape
+                ``(n_val, n_k)``, on the standardised target scale.
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]: ``(obs_var, nu)``, each shape ``(n_k,)``.
+        """
+        def em_scale(r, nu, iters=100):
+            var = np.maximum(r.var(axis=0), _OBS_VAR_FLOOR)
+            for _ in range(iters):
+                w = (nu + 1.0) / (nu + r**2 / var)
+                var = np.maximum(np.mean(w * r**2, axis=0), _OBS_VAR_FLOOR)
+            return var
+
+        def loglik(r, var, nu):
+            from math import lgamma, log, pi
+            const = lgamma((nu + 1) / 2) - lgamma(nu / 2) - 0.5 * log(nu * pi)
+            return np.sum(
+                const - 0.5 * np.log(var)
+                - (nu + 1) / 2 * np.log1p(r**2 / (nu * var)),
+                axis=0,
+            )
+
+        n_k = resid.shape[1]
+        if self.obs_df is not None:
+            nu = np.full(n_k, float(self.obs_df))
+            return em_scale(resid, nu), nu
+        grid = np.geomspace(_MIN_DF + _DF_FLOOR, 200.0, 40)
+        best_ll = np.full(n_k, -np.inf)
+        best_nu = np.full(n_k, grid[0])
+        best_var = em_scale(resid, grid[0])
+        for nu_try in grid:
+            var_try = em_scale(resid, nu_try)
+            ll = loglik(resid, var_try, nu_try)
+            better = ll > best_ll
+            best_ll = np.where(better, ll, best_ll)
+            best_nu = np.where(better, nu_try, best_nu)
+            best_var = np.where(better, var_try, best_var)
+        return best_var, best_nu
 
     def predict(
         self,
@@ -733,7 +870,29 @@ class Cvae:
                 # as the latent eps (after it, so toggled-off draws are
                 # unchanged) and moved to the working device (MPS-safe).
                 eps_obs = torch.randn(out.shape, generator=gen).to(self._device)
-                out = out + eps_obs * torch.exp(0.5 * self._obs_logvar)
+                assert self._obs_logvar is not None
+                scale = torch.exp(0.5 * self._obs_logvar)
+                if self.obs_likelihood == "student_t":
+                    # Scale-mixture form: t_nu = z / sqrt(g / nu) with
+                    # z ~ N(0,1) and g ~ chi^2(nu). The chi-square draw uses a
+                    # seeded numpy Generator (public API, and torch's gamma
+                    # samplers are private) on CPU, then moves to the device --
+                    # the same CPU-draw-then-move convention as eps above, so
+                    # results stay reproducible on every backend.
+                    nu = self._current_df().detach().cpu().numpy()
+                    rng = np.random.default_rng(int(seed))
+                    g_np = rng.chisquare(
+                        np.broadcast_to(nu, out.shape).astype(np.float64)
+                    )
+                    g = torch.as_tensor(
+                        g_np, dtype=out.dtype, device=self._device
+                    )
+                    nu_t = torch.as_tensor(
+                        np.broadcast_to(nu, out.shape).copy(),
+                        dtype=out.dtype, device=self._device,
+                    )
+                    eps_obs = eps_obs / torch.sqrt(g / nu_t)
+                out = out + eps_obs * scale
         out = out.detach().cpu().numpy()
 
         assert self._y_mean is not None and self._y_std is not None
@@ -743,15 +902,23 @@ class Cvae:
         return samples
 
     def obs_sigma(self) -> np.ndarray:
-        """Fitted per-k observation noise on the **raw** SP(k) scale.
+        """Fitted per-k observation **scale** on the raw SP(k) scale.
 
         ``obs_logvar`` lives on the standardised target scale (init 0.0 = one
-        per-k standard deviation), so the raw-scale noise is
+        per-k standard deviation), so the raw-scale value is
         ``exp(0.5 * obs_logvar) * y_std``, mirroring
         :meth:`~fgas_spk.models.dual_vae_components.GaussianVAE.obs_sigma`.
 
+        .. note::
+            This is the distribution's **scale parameter**, not its standard
+            deviation. The two coincide only for ``obs_likelihood="gaussian"``;
+            for a Student-t the standard deviation is larger by
+            ``sqrt(nu / (nu - 2))``. Use :meth:`obs_predictive_sd` when you want
+            the standard deviation regardless of likelihood, and :meth:`obs_df`
+            for the fitted degrees of freedom.
+
         Returns:
-            np.ndarray: Noise sigma per k bin, shape (n_k,) -- ``(1,)`` for a
+            np.ndarray: Noise scale per k bin, shape (n_k,) -- ``(1,)`` for a
                 1-D ``single_k`` target.
 
         Raises:
@@ -768,6 +935,60 @@ class Cvae:
         assert self._y_std is not None
         std_scale = np.exp(0.5 * self._obs_logvar.detach().cpu().numpy())
         return std_scale * self._y_std
+
+    def obs_fitted_df(self) -> np.ndarray:
+        """Degrees of freedom of the observation likelihood, per k bin.
+
+        Returns the fixed :attr:`obs_df` broadcast over the k bins, or the
+        fitted per-k value when ``obs_df`` was None. Infinite for the Gaussian
+        likelihood, which is the ``nu -> inf`` limit of the Student-t.
+
+        Named distinctly from the :attr:`obs_df` *hyperparameter* (a float or
+        None, set at construction) which it must not shadow.
+
+        Returns:
+            np.ndarray: Degrees of freedom per k bin, shape (n_k,).
+
+        Raises:
+            RuntimeError: If ``obs_noise_head=False``, or if called before
+                :meth:`fit`.
+        """
+        if not self.obs_noise_head:
+            raise RuntimeError(
+                "Cvae.obs_fitted_df requires obs_noise_head=True; this model "
+                "was constructed without the observation-noise head."
+            )
+        if self._obs_logvar is None:
+            raise RuntimeError("Cvae.obs_fitted_df called before fit.")
+        n_k = self._obs_logvar.shape[0]
+        if self.obs_likelihood == "gaussian":
+            return np.full(n_k, np.inf)
+        return np.broadcast_to(
+            self._current_df().detach().cpu().numpy(), (n_k,)
+        ).copy()
+
+    def obs_predictive_sd(self) -> np.ndarray:
+        """Observation-noise **standard deviation** per k bin, raw SP(k) scale.
+
+        Unlike :meth:`obs_sigma` (the scale parameter) this is the actual
+        standard deviation of the observation term for whichever likelihood is
+        configured: ``sigma`` for the Gaussian, and ``sigma * sqrt(nu/(nu-2))``
+        for the Student-t (finite because ``nu > 2`` is enforced at construction
+        and by the learned parameterisation). It excludes the latent's own
+        contribution to the predictive spread.
+
+        Returns:
+            np.ndarray: Standard deviation per k bin, shape (n_k,).
+
+        Raises:
+            RuntimeError: If ``obs_noise_head=False``, or if called before
+                :meth:`fit`.
+        """
+        sigma = self.obs_sigma()
+        if self.obs_likelihood == "gaussian":
+            return sigma
+        nu = self.obs_fitted_df()
+        return sigma * np.sqrt(nu / (nu - 2.0))
 
     def latents(
         self,
@@ -859,6 +1080,15 @@ class Cvae:
             self._obs_logvar = torch.nn.Parameter(
                 torch.zeros(n_k, device=self._device)
             )
+            # Learned degrees of freedom (student_t with obs_df=None only).
+            # raw = 0 -> nu = _MIN_DF + _DF_FLOOR + softplus(0) ~= 2.79, a
+            # deliberately heavy-tailed start: the head can always widen nu
+            # toward the Gaussian limit, but a Gaussian-like start gives it
+            # almost no gradient signal to find the tails from.
+            if self.obs_likelihood == "student_t" and self.obs_df is None:
+                self._obs_raw_df = torch.nn.Parameter(
+                    torch.zeros(n_k, device=self._device)
+                )
 
         # Zero-init the prior's logvar head (the second latent_dim outputs of the
         # final layer) so logvar_p == 0 for every input at epoch 0 -- a unit-variance
@@ -936,8 +1166,64 @@ class Cvae:
         reconstruction convention. Returns a scalar tensor.
         """
         if self.obs_noise_head:
+            if self.obs_likelihood == "student_t":
+                return self._nll_student_t(pred, y)
             return self._nll(pred, y)
         return self._recon(pred, y)
+
+    def _current_df(self):
+        """Degrees of freedom as a tensor broadcastable over ``n_k``.
+
+        Returns the fixed ``obs_df`` when one was given, else the learned
+        ``nu = _MIN_DF + _DF_FLOOR + softplus(raw)``, which is strictly greater
+        than ``_MIN_DF`` so the predictive variance stays finite.
+        """
+        import torch
+
+        if self.obs_df is not None:
+            return torch.as_tensor(
+                float(self.obs_df), dtype=torch.float32, device=self._device
+            )
+        assert self._obs_raw_df is not None
+        return _MIN_DF + _DF_FLOOR + torch.nn.functional.softplus(self._obs_raw_df)
+
+    def _nll_student_t(self, pred, y):
+        """Student-t NLL reconstruction with the learned observation scale.
+
+        Per element, with location ``pred``, scale ``sigma = e^{0.5*obs_logvar}``
+        (``obs_logvar`` clamped to ``[-8, 8]`` as in the Gaussian path) and
+        degrees of freedom ``nu`` from :meth:`_current_df`::
+
+            nll = -lgamma((nu+1)/2) + lgamma(nu/2) + 0.5*log(nu*pi) + log(sigma)
+                  + (nu+1)/2 * log1p( ((y-pred)/sigma)^2 / nu )
+
+        summed over ``n_k`` and averaged over the batch, matching the Gaussian
+        path's convention. **Unlike the Gaussian NLL, no constant is dropped**:
+        the normalisation depends on ``nu``, so dropping it would bias a learned
+        ``nu`` and make losses incomparable across ``nu``. A consequence is that
+        ``val_loss`` is *not* comparable between the two likelihoods -- only
+        within one. Returns a scalar tensor.
+        """
+        import torch
+
+        assert self._obs_logvar is not None
+        lv = self._obs_logvar.clamp(-8.0, 8.0)
+        sigma = torch.exp(0.5 * lv)
+        nu = self._current_df()
+        z2 = ((y - pred) / sigma) ** 2
+        # The normaliser is evaluated in float64 and cast back: lgamma((nu+1)/2)
+        # and lgamma(nu/2) grow like nu*log(nu) while their DIFFERENCE stays
+        # O(log nu), so in float32 the subtraction cancels catastrophically once
+        # nu >~ 1e3 -- the t-NLL then diverges from the Gaussian limit instead of
+        # approaching it. The tensor is (n_k,) at most, so the cost is nil.
+        nu64 = nu.double()
+        log_norm = (
+            -torch.lgamma((nu64 + 1.0) / 2.0)
+            + torch.lgamma(nu64 / 2.0)
+            + 0.5 * torch.log(nu64 * math.pi)
+        ).to(z2.dtype)
+        per_elem = log_norm + 0.5 * lv + (nu + 1.0) / 2.0 * torch.log1p(z2 / nu)
+        return per_elem.sum(dim=1).mean()
 
     @staticmethod
     def _recon(pred, y):

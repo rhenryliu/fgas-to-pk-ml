@@ -701,3 +701,198 @@ def test_noise_head_central_interval_is_calibrated(_noise_head_recovery):
     # Held-out central-68% coverage ~ 0.68 (same band as the gate-4 checks).
     coverage = _noise_head_recovery["coverage"]
     assert 0.58 <= coverage <= 0.78, f"held-out 68% coverage {coverage:.3f}"
+
+
+# --- observation likelihood: gaussian | student_t --------------------------
+
+def test_obs_likelihood_defaults_to_gaussian():
+    m = Cvae()
+    assert m.obs_likelihood == "gaussian"
+    assert m.obs_df == pytest.approx(5.0)
+
+
+def test_invalid_obs_likelihood_raises():
+    with pytest.raises(ValueError, match="obs_likelihood must be in"):
+        Cvae(obs_likelihood="cauchy")
+
+
+@pytest.mark.parametrize("df", [2.0, 1.5, 0.0, -1.0])
+def test_obs_df_at_or_below_two_raises(df):
+    # nu <= 2 has infinite variance, so the calibration and obs_predictive_sd
+    # would be undefined.
+    with pytest.raises(ValueError, match="obs_df must exceed"):
+        Cvae(obs_likelihood="student_t", obs_df=df)
+
+
+def test_gaussian_likelihood_is_bit_identical_to_the_pre_change_default():
+    td = _training_data(with_cond=False)
+    common = dict(epochs=8, hidden=16, n_layers=1, latent_dim=2, seed=0,
+                  device="cpu", obs_noise_head=True)
+    implicit = Cvae(**common)
+    explicit = Cvae(obs_likelihood="gaussian", obs_df=5.0, **common)
+    implicit.fit(td)
+    explicit.fit(td)
+    assert np.array_equal(implicit.predict(td.X), explicit.predict(td.X))
+    assert np.array_equal(implicit.obs_sigma(), explicit.obs_sigma())
+
+
+def test_student_t_nll_tends_to_gaussian_nll_as_df_grows():
+    torch = pytest.importorskip("torch")
+    import math
+
+    torch.manual_seed(0)
+    n_k = 4
+    pred = torch.randn(20, n_k)
+    y = pred + 0.3 * torch.randn(20, n_k)
+    m = Cvae(obs_noise_head=True, obs_likelihood="student_t", device="cpu")
+    m._device = "cpu"
+    m._obs_logvar = torch.nn.Parameter(torch.randn(n_k) * 0.3)
+    lv = m._obs_logvar.clamp(-8.0, 8.0)
+    # The Gaussian NLL as implemented drops log(2*pi); the t keeps every
+    # constant, so compare against the Gaussian WITH the constant restored.
+    gauss = (0.5 * (lv + ((y - pred) ** 2) / torch.exp(lv)
+                    + math.log(2 * math.pi))).sum(dim=1).mean()
+    m.obs_df = 5.0
+    near = abs(m._nll_student_t(pred, y).item() - gauss.item())
+    m.obs_df = 1e7
+    far = abs(m._nll_student_t(pred, y).item() - gauss.item())
+    assert far < 1e-3, f"t-NLL should approach the Gaussian NLL; got {far:.2e}"
+    assert far < near, "convergence must be monotone in nu, not divergent"
+
+
+def test_learned_df_stays_above_two():
+    torch = pytest.importorskip("torch")
+    m = Cvae(obs_noise_head=True, obs_likelihood="student_t", obs_df=None,
+             device="cpu")
+    m._device = "cpu"
+    m._obs_raw_df = torch.nn.Parameter(
+        torch.tensor([-100.0, -10.0, 0.0, 10.0, 100.0])
+    )
+    nu = m._current_df().detach().numpy()
+    assert (nu > 2.0).all(), f"nu must stay > 2 for finite variance; got {nu}"
+
+
+def test_student_t_samples_match_exact_quantiles():
+    # Moment-based checks are useless for heavy tails (the 4th moment barely
+    # converges), so verify the sampler against exact t quantiles instead.
+    stats = pytest.importorskip("scipy.stats")
+    td = _training_data(with_cond=False, n=60, n_k=3)
+    nu = 5.0
+    m = Cvae(obs_noise_head=True, obs_likelihood="student_t", obs_df=nu,
+             epochs=8, hidden=16, n_layers=1, latent_dim=2, seed=0, device="cpu")
+    m.fit(td)
+    samples = m.predict_samples(td.X[:1], None, None, n_samples=40000, seed=0)
+    z = (samples[:, 0, :] - m.predict(td.X[:1], None, None)[0]) / m.obs_sigma()
+    for q in (0.05, 0.25, 0.75, 0.95):
+        emp = np.quantile(z, q, axis=0).mean()
+        assert emp == pytest.approx(stats.t.ppf(q, nu), abs=0.06), (
+            f"quantile {q}: empirical {emp:.3f} vs exact {stats.t.ppf(q, nu):.3f}"
+        )
+
+
+def test_student_t_sampling_is_seeded_and_reproducible():
+    td = _training_data(with_cond=False, n=40)
+    m = Cvae(obs_noise_head=True, obs_likelihood="student_t", obs_df=4.0,
+             epochs=8, hidden=16, n_layers=1, latent_dim=2, seed=0, device="cpu")
+    m.fit(td)
+    a = m.predict_samples(td.X[:4], None, None, n_samples=25, seed=3)
+    b = m.predict_samples(td.X[:4], None, None, n_samples=25, seed=3)
+    c = m.predict_samples(td.X[:4], None, None, n_samples=25, seed=4)
+    assert np.array_equal(a, b)
+    assert not np.allclose(a, c)
+
+
+@pytest.mark.parametrize("nu,sigma", [(3.0, 0.2), (5.0, 0.05), (10.0, 0.5)])
+def test_calibration_recovers_known_student_t_scale(nu, sigma):
+    stats = pytest.importorskip("scipy.stats")
+    m = Cvae(obs_noise_head=True, obs_likelihood="student_t", obs_df=nu,
+             device="cpu")
+    resid = stats.t.rvs(nu, size=(4000, 3), random_state=np.random.default_rng(0))
+    var, fitted_nu = m._fit_student_t(resid * sigma)
+    assert np.sqrt(var).mean() == pytest.approx(sigma, rel=0.06)
+    assert fitted_nu == pytest.approx(nu)
+
+
+def test_calibration_recovers_learned_df():
+    stats = pytest.importorskip("scipy.stats")
+    m = Cvae(obs_noise_head=True, obs_likelihood="student_t", obs_df=None,
+             device="cpu")
+    resid = stats.t.rvs(4.0, size=(8000, 3), random_state=np.random.default_rng(1))
+    _var, nu = m._fit_student_t(resid * 0.1)
+    assert nu.mean() == pytest.approx(4.0, rel=0.25), f"fitted nu {nu}"
+
+
+def test_calibration_picks_light_tails_for_gaussian_residuals():
+    # A learned nu must not invent heavy tails that are not there.
+    m = Cvae(obs_noise_head=True, obs_likelihood="student_t", obs_df=None,
+             device="cpu")
+    resid = np.random.default_rng(2).normal(scale=0.1, size=(8000, 3))
+    _var, nu = m._fit_student_t(resid)
+    assert nu.mean() > 30.0, f"expected a near-Gaussian nu; got {nu}"
+
+
+def test_obs_accessors_are_consistent_across_likelihoods():
+    td = _training_data(with_cond=False, n=60)
+    common = dict(epochs=8, hidden=16, n_layers=1, latent_dim=2, seed=0,
+                  device="cpu", obs_noise_head=True)
+    g = Cvae(**common)
+    g.fit(td)
+    assert np.isinf(g.obs_fitted_df()).all()
+    assert np.array_equal(g.obs_predictive_sd(), g.obs_sigma())
+
+    nu = 5.0
+    t = Cvae(obs_likelihood="student_t", obs_df=nu, **common)
+    t.fit(td)
+    assert t.obs_fitted_df() == pytest.approx(nu)
+    # sd = scale * sqrt(nu / (nu - 2)); scale alone would understate the spread
+    assert t.obs_predictive_sd() == pytest.approx(
+        t.obs_sigma() * np.sqrt(nu / (nu - 2.0))
+    )
+
+
+def test_student_t_beats_gaussian_coverage_on_heavy_tailed_data():
+    """The end-to-end claim: when the residuals are heavy-tailed, a
+    variance-matched Gaussian over-covers a central interval (its sd is inflated
+    by rare large errors, so the bulk sits well inside +-1 sd) while the
+    Student-t lands near nominal.
+
+    The target is deliberately LINEAR and the injected noise large: the effect
+    only exists when the residual is dominated by the heavy-tailed noise rather
+    than by the model's own approximation error. The kurtosis assertion guards
+    that precondition -- without it the test can pass vacuously on residuals
+    that are not heavy-tailed at all.
+    """
+    stats = pytest.importorskip("scipy.stats")
+    rng = np.random.default_rng(0)
+    n, n_k, n_tr = 800, 4, 600
+    X = rng.normal(size=(n, 6))
+    W = rng.normal(size=(6, n_k)) / np.sqrt(6)
+    y = X @ W + 0.30 * stats.t.rvs(3.0, size=(n, n_k), random_state=rng)
+    tr = TrainingData(
+        X=X[:n_tr], X_cond=None, X_params=None, y=y[:n_tr], nd=np.zeros(n_tr),
+        sim_index=np.arange(n_tr), k=np.linspace(0.1, 1.0, n_k),
+        radii_mpch=np.linspace(0.1, 3.0, 6), source_path="synthetic",
+    )
+    common = dict(epochs=300, hidden=64, n_layers=2, latent_dim=2, seed=0,
+                  device="cpu", obs_noise_head=True, obs_calibrate_on_val=True)
+
+    def cov68(model):
+        s = model.predict_samples(X[n_tr:], None, None, n_samples=400, seed=0)
+        lo, hi = np.quantile(s, 0.16, axis=0), np.quantile(s, 0.84, axis=0)
+        return float(np.mean((y[n_tr:] >= lo) & (y[n_tr:] <= hi)))
+
+    g = Cvae(obs_likelihood="gaussian", **common)
+    g.fit(tr)
+    resid = (y[n_tr:] - g.predict(X[n_tr:], None, None)).ravel()
+    assert stats.kurtosis(resid) > 3.0, (
+        f"precondition failed: residual kurtosis {stats.kurtosis(resid):.1f} is "
+        "not heavy-tailed, so this test would pass vacuously"
+    )
+    t = Cvae(obs_likelihood="student_t", obs_df=3.0, **common)
+    t.fit(tr)
+    cov_g, cov_t = cov68(g), cov68(t)
+    assert cov_g > 0.75, f"Gaussian should over-cover here; got {cov_g:.3f}"
+    assert abs(cov_t - 0.68) < abs(cov_g - 0.68), (
+        f"student_t should be closer to nominal 0.68: gaussian {cov_g:.3f} "
+        f"vs t {cov_t:.3f}"
+    )
