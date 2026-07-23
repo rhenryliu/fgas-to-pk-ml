@@ -1,0 +1,27 @@
+model: cvae
+model_params:
+  latent_dim: 2
+  hidden: 256
+  n_layers: 2
+  epochs: 200
+  lr: 0.0005
+  weight_decay: 0.05
+  dropout: 0.0
+  batch_size: 128
+  beta: 1.0
+  anneal_epochs: null
+  val_frac: 0.1
+  obs_noise_head: true
+  obs_calibrate_on_val: true
+seed: 0
+split:
+  train_frac: 0.7
+  val_frac: 0.1
+  test_frac: 0.2
+  seed: 2
+evaluation:
+  suppressed_thresholds:
+  - 0.95
+  - 0.9
+  - 0.8
+write_root: null

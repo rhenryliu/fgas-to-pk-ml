@@ -1,0 +1,20 @@
+model: mlp
+model_params:
+  hidden: 256
+  n_layers: 4
+  epochs: 200
+  lr: 0.0005
+  weight_decay: 0.3
+  batch_size: 128
+seed: 0
+split:
+  train_frac: 0.7
+  val_frac: 0.1
+  test_frac: 0.2
+  seed: 10
+evaluation:
+  suppressed_thresholds:
+  - 0.95
+  - 0.9
+  - 0.8
+write_root: null
