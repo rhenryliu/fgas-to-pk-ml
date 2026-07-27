@@ -162,6 +162,16 @@ informative latent shows ``latent_gap > 0`` and ``kl > 0``.
   observation noise), so the across-sample spread estimates ``p(y | x)``.
 - :meth:`latents` returns ``mu_p`` by default, or the recognition code ``mu_q``
   when a target ``y`` is supplied.
+- :meth:`decode` runs the decoder on a caller-supplied ``z`` at a given profile,
+  the generative half neither :meth:`predict` (fixed at ``z = mu_p``) nor
+  :meth:`predict_samples` (always sampled) can express. Because the decoder reads
+  the profile too, a code is only meaningful *at* the profile it came from.
+- :meth:`latent_dists` returns the same distribution's ``(mu, std)`` -- the width
+  as well as the mean, under the same ``y`` switch. Pooling ``mu + std * eps``
+  draws over the dataset estimates the *aggregate* prior or posterior; pooling
+  means alone does not. Comparing those two aggregates is what separates
+  posterior collapse from a genuinely informative latent, which the ``kl`` trace
+  alone cannot do.
 
 **Normalisation / determinism.** As in :mod:`~fgas_spk.models.vib_regressor`:
 per-column standardisation fitted on the training rows (profile, each conditioning
@@ -1008,6 +1018,9 @@ class Cvae:
         sampling). Not part of the :class:`~fgas_spk.models.base.ProfileToSpk`
         protocol. The conditioning modalities must match :meth:`fit`.
 
+        This is :meth:`latent_dists`'s ``mu`` with its ``std`` discarded; use that
+        method when the distribution's width matters (e.g. an aggregate density).
+
         Args:
             X (np.ndarray): Gas-fraction profiles, shape (n_examples, n_radii).
             X_cond (np.ndarray | None): Observable conditioning scalars, shape
@@ -1030,24 +1043,169 @@ class Cvae:
             ValueError: If the presence of ``X_cond`` or ``X_params`` does not
                 match how the model was fit.
         """
+        if self._prior is None or self._recognition is None:
+            raise RuntimeError("Cvae.latents called before fit.")
+        return self.latent_dists(X, X_cond, X_params, y)[0]
+
+    def latent_dists(
+        self,
+        X: np.ndarray,
+        X_cond: np.ndarray | None = None,
+        X_params: np.ndarray | None = None,
+        y: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return the latent distribution's ``(mu, std)`` -- the widths, not only means.
+
+        The distributional counterpart of :meth:`latents`, which returns this
+        method's ``mu`` and discards ``std``. Selected by the same ``y`` switch:
+        with ``y=None`` the **conditional prior** ``p(z | x, ctx)`` -- the
+        distribution :meth:`predict_samples` actually draws from -- and with a
+        target supplied the **recognition** posterior ``q(z | x, y, ctx)``, the
+        code the encoder assigns when it sees the answer.
+
+        The widths are what make an *aggregate* density estimable: pooling draws
+        ``mu + std * eps`` over the dataset gives ``(1/N) sum_i q(z | x_i, y_i)``
+        (or the same for ``p``), whereas pooling the means alone gives a
+        systematically narrower cloud that is not the aggregate distribution.
+        Comparing the two aggregates is the collapse diagnostic the per-epoch
+        ``kl`` trace cannot resolve on its own (see the module docstring).
+
+        Note that ``p`` here is **learned and input-dependent**, a different
+        Gaussian per profile -- not the fixed ``N(0, I)`` of a plain VAE. The
+        aggregate prior is therefore a mixture and is not unit-Gaussian in
+        general; it, not ``N(0, I)``, is the reference ``q`` should be read
+        against.
+
+        ``std`` is ``exp(0.5 * logvar)`` with ``logvar`` clamped to ``[-8, 8]``
+        as everywhere else in this model, so it is strictly positive. Both are
+        deterministic (no sampling). Not part of the
+        :class:`~fgas_spk.models.base.ProfileToSpk` protocol; the conditioning
+        modalities must match :meth:`fit`.
+
+        Args:
+            X (np.ndarray): Gas-fraction profiles, shape (n_examples, n_radii).
+            X_cond (np.ndarray | None): Observable conditioning scalars, shape
+                (n_examples, n_cond). Required iff the model was fit with
+                ``X_cond``. Defaults to None.
+            X_params (np.ndarray | None): CAMELS parameters, shape
+                (n_examples, n_params). Required iff the model was fit with
+                ``X_params``. Defaults to None.
+            y (np.ndarray | None): Optional SP(k) target, shape (n_examples, n_k)
+                (or 1-D for a ``single_k`` model). When given, the recognition
+                distribution is returned instead of the prior. Defaults to None.
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]: ``(mu, std)``, each of shape
+                (n_examples, latent_dim).
+
+        Raises:
+            RuntimeError: If called before :meth:`fit`.
+            ValueError: If the presence of ``X_cond`` or ``X_params`` does not
+                match how the model was fit.
+        """
         import torch
 
         if self._prior is None or self._recognition is None:
-            raise RuntimeError("Cvae.latents called before fit.")
+            raise RuntimeError("Cvae.latent_dists called before fit.")
         self._check_modality(X_cond, X_params)
 
         x_t, cond_t = self._prepare_inputs(X, X_cond, X_params)
         self._eval_mode()
         with torch.no_grad():
             if y is None:
-                mu, _ = self._prior_dist(x_t, cond_t)
+                mu, logvar = self._prior_dist(x_t, cond_t)
             else:
                 assert self._y_mean is not None and self._y_std is not None
                 y_arr = np.asarray(y, dtype=np.float64)
                 y2d = y_arr[:, None] if y_arr.ndim == 1 else y_arr
                 y_t = self._to_tensor(self._apply_norm(y2d, self._y_mean, self._y_std))
-                mu, _ = self._recognition_dist(x_t, y_t, cond_t)
-        return mu.detach().cpu().numpy()
+                mu, logvar = self._recognition_dist(x_t, y_t, cond_t)
+            std = torch.exp(0.5 * logvar)
+        return mu.detach().cpu().numpy(), std.detach().cpu().numpy()
+
+    def decode(
+        self,
+        z: np.ndarray,
+        X: np.ndarray,
+        X_cond: np.ndarray | None = None,
+        X_params: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Decode latent codes ``z`` at profiles ``X`` to SP(k) on the raw scale.
+
+        The generative half of the model, exposed for inspection: it answers
+        "what would the decoder emit for *this* code at *this* profile", which
+        :meth:`predict` (which always uses ``z = mu_p``) and
+        :meth:`predict_samples` (which always samples ``z``) cannot be made to
+        answer. A latent traversal -- sweeping one component of ``z`` while
+        holding the rest, and the profile, fixed -- is the motivating use.
+
+        .. important::
+            Unlike a plain VAE's decoder, this one **consumes the profile
+            directly**, ``p(y | z, x, ctx)``: ``x`` informs the mean and ``z``
+            carries only the residual, underdetermined variation (see the module
+            docstring). So ``z`` alone does not determine an output, and a code
+            is only meaningful *at* a profile. Decoding a code taken from one
+            profile at a different profile -- or at a synthetic, averaged
+            profile -- is an input combination the decoder never saw in training;
+            the result is an artefact, not a prediction. Pair ``z`` with the
+            profile and context it came from.
+
+        The target standardisation is inverted on the way out, so the result is
+        on the raw SP(k) scale, as with :meth:`predict`. Deterministic: dropout
+        is disabled and nothing is sampled. Not part of the
+        :class:`~fgas_spk.models.base.ProfileToSpk` protocol.
+
+        Args:
+            z (np.ndarray): Latent codes, shape (n_examples, latent_dim).
+            X (np.ndarray): Gas-fraction profiles, shape (n_examples, n_radii).
+                Must have the same number of rows as ``z``.
+            X_cond (np.ndarray | None): Observable conditioning scalars, shape
+                (n_examples, n_cond). Required iff the model was fit with
+                ``X_cond``. Defaults to None.
+            X_params (np.ndarray | None): CAMELS parameters, shape
+                (n_examples, n_params). Required iff the model was fit with
+                ``X_params``. Defaults to None.
+
+        Returns:
+            np.ndarray: Decoded SP(k), shape (n_examples, n_k) for a curve
+                target or (n_examples,) for a 1-D ``single_k`` target.
+
+        Raises:
+            RuntimeError: If called before :meth:`fit`.
+            ValueError: If ``z`` is not 2-D with ``latent_dim`` columns, if its
+                row count does not match ``X``, or if the presence of ``X_cond``
+                or ``X_params`` does not match how the model was fit.
+        """
+        import torch
+
+        if self._prior is None or self._decoder is None:
+            raise RuntimeError("Cvae.decode called before fit.")
+        self._check_modality(X_cond, X_params)
+
+        z_arr = np.asarray(z, dtype=np.float64)
+        if z_arr.ndim != 2 or z_arr.shape[1] != self.latent_dim:
+            raise ValueError(
+                f"z must have shape (n_examples, {self.latent_dim}); got "
+                f"{z_arr.shape}."
+            )
+        x_t, cond_t = self._prepare_inputs(X, X_cond, X_params)
+        if z_arr.shape[0] != x_t.shape[0]:
+            raise ValueError(
+                f"z and X must have the same number of rows; got "
+                f"{z_arr.shape[0]} and {int(x_t.shape[0])}. A code is only "
+                "meaningful at the profile it was produced for."
+            )
+
+        self._eval_mode()
+        with torch.no_grad():
+            out = self._decode(self._to_tensor(z_arr), x_t, cond_t)
+        out = out.detach().cpu().numpy()
+
+        assert self._y_mean is not None and self._y_std is not None
+        y = self._invert_norm(out, self._y_mean, self._y_std)
+        if self._y_was_1d:
+            y = y[:, 0]
+        return y
 
     # --- internals ---------------------------------------------------------
 

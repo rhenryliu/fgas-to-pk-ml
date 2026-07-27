@@ -223,6 +223,117 @@ def test_latents_prior_vs_recognition():
     assert not np.allclose(mu_p, mu_q)
 
 
+def test_latent_dists_mu_agrees_with_latents_and_std_is_positive():
+    # latent_dists is the primitive latents() delegates to: the means must match
+    # exactly on BOTH branches, so the two APIs cannot drift apart.
+    td = _training_data(with_cond=True, n=24, n_k=4, seed=3)
+    model = Cvae(
+        latent_dim=4, hidden=16, n_layers=2, epochs=30, batch_size=8,
+        seed=0, device="cpu",
+    )
+    model.fit(td)
+
+    mu_p, std_p = model.latent_dists(td.X, td.X_cond)
+    mu_q, std_q = model.latent_dists(td.X, td.X_cond, y=td.y)
+    assert mu_p.shape == std_p.shape == (td.X.shape[0], 4)
+    assert mu_q.shape == std_q.shape == (td.X.shape[0], 4)
+    assert np.array_equal(mu_p, model.latents(td.X, td.X_cond))
+    assert np.array_equal(mu_q, model.latents(td.X, td.X_cond, y=td.y))
+
+    # std = exp(0.5 * logvar) with logvar clamped to [-8, 8]: strictly positive
+    # and inside the clamp's implied bounds.
+    for std in (std_p, std_q):
+        assert np.all(std > 0.0)
+        assert np.all(std >= np.exp(-4.0)) and np.all(std <= np.exp(4.0))
+    # The prior and the recognition posterior are genuinely different laws.
+    assert not np.allclose(mu_p, mu_q)
+
+
+def test_latent_dists_before_fit_raises_and_checks_modality():
+    model = Cvae(latent_dim=2, hidden=8, n_layers=1, epochs=1, seed=0, device="cpu")
+    with pytest.raises(RuntimeError, match="before fit"):
+        model.latent_dists(np.zeros((2, 6)))
+
+    td = _training_data(with_cond=True, n=16, n_k=3, seed=1)
+    model = Cvae(latent_dim=2, hidden=8, n_layers=1, epochs=2, batch_size=8,
+                 seed=0, device="cpu")
+    model.fit(td)
+    # Fitted WITH conditioning, so omitting it must raise, as latents() does.
+    with pytest.raises(ValueError, match="X_cond"):
+        model.latent_dists(td.X)
+
+
+def test_decode_at_the_prior_mean_reproduces_predict():
+    # predict() IS the prior-mean decode, so decode(latents(X), X) must equal it
+    # exactly. This pins the new public method to existing behaviour.
+    td = _training_data(with_cond=True, n=24, n_k=4, seed=3)
+    model = Cvae(latent_dim=3, hidden=16, n_layers=2, epochs=20, batch_size=8,
+                 seed=0, device="cpu")
+    model.fit(td)
+    mu_p = model.latents(td.X, td.X_cond)
+    decoded = model.decode(mu_p, td.X, td.X_cond)
+    assert decoded.shape == td.y.shape
+    assert np.allclose(decoded, model.predict(td.X, td.X_cond), atol=0.0, rtol=0.0)
+
+
+def test_decode_responds_to_the_latent():
+    # Perturbing z must change the decode -- otherwise the traversal figure is
+    # measuring nothing.
+    td = _training_data(with_cond=False, n=24, n_k=5, seed=4)
+    model = Cvae(latent_dim=3, hidden=16, n_layers=2, epochs=25, batch_size=8,
+                 seed=0, device="cpu")
+    model.fit(td)
+    base = model.latents(td.X)
+    shifted = base.copy()
+    shifted[:, 0] += 3.0
+    assert not np.allclose(model.decode(base, td.X), model.decode(shifted, td.X))
+
+
+def test_decode_single_k_target_returns_1d():
+    td = _training_data(with_cond=False, n=20, n_k=1, seed=6)
+    td = TrainingData(
+        X=td.X, X_cond=None, X_params=None, y=td.y[:, 0], nd=td.nd,
+        sim_index=td.sim_index, k=td.k[:1], radii_mpch=td.radii_mpch,
+        source_path=td.source_path, param_names=None, meta={}, config=None,
+    )
+    model = Cvae(latent_dim=2, hidden=8, n_layers=1, epochs=5, batch_size=8,
+                 seed=0, device="cpu")
+    model.fit(td)
+    out = model.decode(model.latents(td.X), td.X)
+    assert out.shape == (td.X.shape[0],)
+    assert np.allclose(out, model.predict(td.X))
+
+
+def test_decode_validates_shapes_and_modality():
+    model = Cvae(latent_dim=2, hidden=8, n_layers=1, epochs=1, seed=0, device="cpu")
+    with pytest.raises(RuntimeError, match="before fit"):
+        model.decode(np.zeros((2, 2)), np.zeros((2, 6)))
+
+    td = _training_data(with_cond=True, n=16, n_k=3, seed=1)
+    model = Cvae(latent_dim=2, hidden=8, n_layers=1, epochs=2, batch_size=8,
+                 seed=0, device="cpu")
+    model.fit(td)
+    n = td.X.shape[0]
+    with pytest.raises(ValueError, match="z must have shape"):
+        model.decode(np.zeros((n, 5)), td.X, td.X_cond)      # wrong latent width
+    with pytest.raises(ValueError, match="same number of rows"):
+        model.decode(np.zeros((n - 1, 2)), td.X, td.X_cond)  # row mismatch
+    with pytest.raises(ValueError, match="X_cond"):
+        model.decode(np.zeros((n, 2)), td.X)                 # modality mismatch
+
+
+def test_latent_dists_is_deterministic():
+    # Means and widths are read off the networks, never sampled.
+    td = _training_data(with_cond=False, n=20, n_k=3, seed=5)
+    model = Cvae(latent_dim=3, hidden=16, n_layers=1, epochs=5, batch_size=8,
+                 seed=0, device="cpu")
+    model.fit(td)
+    first = model.latent_dists(td.X)
+    second = model.latent_dists(td.X)
+    assert np.array_equal(first[0], second[0])
+    assert np.array_equal(first[1], second[1])
+
+
 def test_prior_logvar_head_is_zero_initialised():
     # The prior's logvar head is zero-init so p(z|x) starts at unit variance: an
     # untrained (epochs=0) prior returns logvar_p == 0 for every input.
