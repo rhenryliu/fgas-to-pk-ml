@@ -325,8 +325,11 @@ _COVERAGE_LEVELS = (0.68, 0.90, 0.95)
 _N_PREDICTIVE_SAMPLES = 200
 # Percentiles of the suppression-depth ordering at which the residual-map figure
 # draws its curve panels. A fixed ladder, not a random or worst-N draw: it is
-# reproducible, spans the whole population, and cannot be cherry-picked.
-_LADDER_PERCENTILES = (5, 25, 50, 75, 95)
+# reproducible, spans the whole population, and cannot be cherry-picked. Held off
+# the extreme tails (maintainer decision, 2026-07-29): p5/p95 land on single
+# outlier curves, which set a panel's scale without being representative of the
+# population near that end.
+_LADDER_PERCENTILES = (10, 30, 50, 70, 90)
 # Robust colour limit for the residual heatmap: the symmetric range is set at
 # this percentile of |residual| so a handful of outlier curves saturate rather
 # than washing the whole map out.
@@ -338,11 +341,22 @@ _QZ_SAMPLES_PER_EXAMPLE = 20
 # 2-D histogram resolution for the aggregate-density panels (as in that script).
 _QZ_BINS = 60
 # Latent-traversal figure. The profiles held fixed while z is swept, given as
-# percentiles of the suppression-depth ordering: weak, median, and strong
-# feedback, so the traversal shows whether the latent acts the same way across
-# the population. Real rows, never an averaged synthetic profile -- the decoder
-# reads the profile, so an averaged one is an input it never trained on.
-_TRAVERSAL_PROFILE_PERCENTILES = (10, 50, 90)
+# percentiles of the suppression-depth ordering: strong through weak feedback, so
+# the traversal shows whether the latent acts the same way across the population.
+# Real rows, never an averaged synthetic profile -- the decoder reads the profile,
+# so an averaged one is an input it never trained on.
+#
+# Deliberately ALIASED to _LADDER_PERCENTILES (maintainer decision, 2026-07-29) so
+# the traversal's columns and the residual-map figure's ladder panels sit at the
+# same percentiles; give this its own tuple to decouple them. Equal percentiles do
+# NOT imply equal simulations: the ladder picks from the held-out fold, this figure
+# from the full dataset, so the two select from different populations.
+_TRAVERSAL_PROFILE_PERCENTILES = _LADDER_PERCENTILES
+# Per-panel size (inches) of the latent-traversal grid, which is n_profiles wide.
+# Smaller than the runner's other figures: at five columns, full-size panels give
+# an unviewable ~21-inch-wide figure.
+_TRAVERSAL_PANEL_W = 3.2
+_TRAVERSAL_PANEL_H = 2.8
 # Sweep half-range, in units of that profile's OWN prior sd sigma_p(x). Wider
 # than the +/-0.9 of the reference figure in scripts/lin_analogue_figures.py:
 # that script sweeps a population sigma, and a weakly-informative latent needs
@@ -1405,14 +1419,16 @@ def _write_latent_traversal_figure(
 ) -> Path | None:
     """Decoder response to sweeping one latent at a time, at fixed real profiles.
 
-    A grid of panels: **rows are profiles**, and the columns are the row's
-    **input f_gas(R) profile** followed by one panel per **latent dimension**
-    (so ``n_dims + 1`` columns in total).
+    A grid of panels: **columns are profiles**, and the rows are the columns'
+    **input f_gas(R) profiles** followed by one row per **latent dimension** (so
+    ``n_dims + 1`` rows in total). Laid out this way -- rather than transposed --
+    because a latent width of one or two is the common case while the profile
+    ladder is five wide, so the wide axis is the one that carries the profiles.
 
-    The leading column is the conditioning input the rest of that row is decoded
-    at, over the dataset's 16-84% f_gas band for scale. It is not decoration: the
+    The leading row is the conditioning input each column below it is decoded at,
+    over the dataset's 16-84% f_gas band for scale. It is not decoration: the
     decoder reads the profile, and the latent only ever perturbs around what that
-    profile already implies, so the size and shape of the fan to its right is not
+    profile already implies, so the size and shape of the fan beneath it is not
     interpretable without seeing which profile produced it.
 
     In each traversal cell the code starts at that profile's own conditional-prior
@@ -1422,6 +1438,13 @@ def _write_latent_traversal_figure(
     **at that same profile and its own context**. Curves are coloured by the
     perturbation; the unperturbed decode is drawn in black and the dataset's
     16-84% SP(k) band in grey for scale.
+
+    **Reading the y axes.** Each latent row shares one SP(k) scale across every
+    profile column (maintainer decision, 2026-07-29), so one latent's effect is
+    directly comparable across the population along its row. The cost is that a
+    row spans deeply- and weakly-suppressed profiles at once: a narrow fan in a
+    weakly-suppressed column is not by itself evidence that the latent does
+    nothing there, since the shared scale is set by the deepest column in the row.
 
     This is the **decoder-side** counterpart to the KL trace and the aggregate
     density. Those ask whether the *encoder* uses ``z``; this asks whether ``z``
@@ -1439,7 +1462,10 @@ def _write_latent_traversal_figure(
       manifold input combinations the decoder never trained on, so the profiles
       are real dataset rows (at :data:`_TRAVERSAL_PROFILE_PERCENTILES` of the
       suppression-depth ordering, via :func:`_ladder_picks`) and each is decoded
-      with its own context.
+      with its own context. Those percentiles are the residual-map figure's
+      ladder, so the two figures' panels sit at matching depths -- though not on
+      matching rows, since that figure picks from the held-out fold and this one
+      from the full dataset.
     - **Per-profile sweep units.** The step is that profile's own
       ``sigma_p(x)``, not a population sigma, so the sweep spans exactly the
       range the model itself considers plausible *for that profile* -- making the
@@ -1497,31 +1523,42 @@ def _write_latent_traversal_figure(
     r_axis = radii if radii_are_real else np.arange(X_all.shape[1], dtype=float)
     p_lo, p_med, p_hi = np.percentile(X_all, [16, 50, 84], axis=0)
 
-    nrows, ncols = rows.size, n_dims + 1  # +1 for the input-profile column
+    # ncols follows the picks actually returned, not len(percentiles):
+    # _ladder_picks drops a duplicate when two percentiles collide on one row,
+    # which happens on a fold smaller than the ladder.
+    nrows, ncols = n_dims + 1, rows.size  # +1 for the input-profile row
     cmap = plt.get_cmap("RdBu_r")
-    fig = plt.figure(figsize=(4.3 * ncols, 3.4 * nrows))
+    # constrained_layout, as in the residual map: this grid carries a three-line
+    # suptitle, a per-column title row, an x label on BOTH the profile row (R) and
+    # the bottom traversal row (k), and a colourbar spanning only the lower rows.
+    # Default placement collides the suptitle with the column titles.
+    fig = plt.figure(
+        figsize=(_TRAVERSAL_PANEL_W * ncols, _TRAVERSAL_PANEL_H * nrows),
+        constrained_layout=True,
+    )
     gs = fig.add_gridspec(nrows, ncols)
-    # Sharing is set per column group, not uniformly: the profile column carries
-    # f_gas and shares y down the column so profiles are comparable, while each
-    # traversal ROW shares y in SP(k). One `sharey` rule cannot express both.
+    # Sharing is set per row group, not uniformly: the profile row carries f_gas
+    # and shares y along the row so profiles are comparable, while each LATENT row
+    # shares y in SP(k) across all profiles, so that latent's effect is comparable
+    # across the population. One `sharey` rule cannot express both.
     axes = np.empty((nrows, ncols), dtype=object)
     ax_profile_ref = None
     ax_k_ref = None
-    for r in range(nrows):
-        ax_p = fig.add_subplot(gs[r, 0], sharex=ax_profile_ref, sharey=ax_profile_ref)
+    row_refs: list = [None] * n_dims
+    for c in range(ncols):
+        ax_p = fig.add_subplot(gs[0, c], sharex=ax_profile_ref, sharey=ax_profile_ref)
         if ax_profile_ref is None:
             ax_profile_ref = ax_p
-        axes[r, 0] = ax_p
-        row_ref = None
+        axes[0, c] = ax_p
         for j in range(n_dims):
-            ax = fig.add_subplot(gs[r, j + 1], sharex=ax_k_ref, sharey=row_ref)
+            ax = fig.add_subplot(gs[j + 1, c], sharex=ax_k_ref, sharey=row_refs[j])
             if ax_k_ref is None:
                 ax_k_ref = ax
-            if row_ref is None:
-                row_ref = ax
-            axes[r, j + 1] = ax
+            if row_refs[j] is None:
+                row_refs[j] = ax
+            axes[j + 1, c] = ax
 
-    for r, row_idx in enumerate(rows):
+    for c, row_idx in enumerate(rows):
         i = int(row_idx)
         X_i = _row(td.X, i)
         cond_i = _row(td.X_cond, i)
@@ -1530,27 +1567,27 @@ def _write_latent_traversal_figure(
         base = np.asarray(mu_p, dtype=float)[0]
         sigma = np.asarray(std_p, dtype=float)[0]
 
-        # Column 0: the conditioning input this row's whole traversal is decoded
+        # Row 0: the conditioning input this column's whole traversal is decoded
         # at. The latent only ever perturbs around what THIS profile implies, so
-        # the fan to its right is unreadable without it.
-        ax_p = axes[r, 0]
+        # the fan beneath it is unreadable without it.
+        ax_p = axes[0, c]
         ax_p.fill_between(r_axis, p_lo, p_hi, color="grey", alpha=0.22,
                           linewidth=0, label="data 16-84%")
         ax_p.plot(r_axis, p_med, color="grey", linestyle=":", linewidth=1)
         ax_p.plot(r_axis, X_all[i], color="black", linewidth=1.5,
-                  label=r"this row's $f_{gas}$")
+                  label=r"this column's $f_{gas}$")
         if radii_are_real:
             ax_p.set_xscale("log")
             _thin_log_ticks(ax_p, r_axis)
-        ax_p.set_ylabel(
-            f"p{labels[r]} · sim {int(sim_ids[i])}\n" + r"$f_{gas}(R)$",
-            fontsize=9,
-        )
-        if r == nrows - 1:
-            ax_p.set_xlabel("R [Mpc/h]" if radii_are_real else "profile bin")
-        if r == 0:
-            ax_p.set_title("input profile (conditioning)", fontsize=10)
+        # The profile row carries R, the traversal rows below carry k, so this
+        # row labels its own x axis rather than deferring to the bottom row.
+        ax_p.set_xlabel("R [Mpc/h]" if radii_are_real else "profile bin", fontsize=9)
+        ax_p.set_title(f"p{labels[c]} · sim {int(sim_ids[i])}", fontsize=10)
+        if c == 0:
+            ax_p.set_ylabel(r"$f_{gas}(R)$", fontsize=9)
             ax_p.legend(fontsize=7, loc="best")
+        else:  # y is shared along the row: one set of tick labels is enough
+            ax_p.tick_params(labelleft=False)
 
         # The profile and context, repeated once per swept code.
         X_rep = _row(td.X, i, _TRAVERSAL_N_CURVES)
@@ -1561,7 +1598,7 @@ def _write_latent_traversal_figure(
         )[0]
 
         for j in range(n_dims):
-            ax = axes[r, j + 1]
+            ax = axes[j + 1, c]
             z = np.tile(base, (_TRAVERSAL_N_CURVES, 1))
             z[:, j] = base[j] + deltas * sigma[j]
             curves = np.asarray(
@@ -1580,26 +1617,28 @@ def _write_latent_traversal_figure(
                     label="true SP(k)")
             ax.set_xscale("log")
             _thin_log_ticks(ax, k)
-            if r == nrows - 1:
+            if j == n_dims - 1:
                 ax.set_xlabel("k [h/Mpc]")
-            if r == 0:
-                ax.set_title(f"latent {j}", fontsize=10)
-            if j == 0:
-                ax.set_ylabel("SP(k)", fontsize=9)
-            if r == 0 and j == 0:
-                ax.legend(fontsize=7, loc="best")
+            if c == 0:
+                ax.set_ylabel(f"latent {j}\nSP(k)", fontsize=9)
+                if j == 0:
+                    ax.legend(fontsize=7, loc="best")
+            else:  # y is shared along the row (see the sharing block above)
+                ax.tick_params(labelleft=False)
 
     scalar_map = plt.cm.ScalarMappable(
         cmap=cmap, norm=Normalize(-_TRAVERSAL_SIGMA, _TRAVERSAL_SIGMA)
     )
+    # The colourbar keys the traversal rows only: the profile row carries no
+    # perturbation, so attaching it there would imply a colour scale it does not use.
     fig.colorbar(
-        scalar_map, ax=axes.ravel().tolist(),
+        scalar_map, ax=axes[1:, :].ravel().tolist(),
         label=r"perturbation [profile's own $\sigma_p(x)$]",
     )
     fig.suptitle(
         f"{label}\nlatent traversal -- one component swept at a time, decoded "
-        "at each row's own input profile (first column)\n"
-        f"rows: profiles at p{'/p'.join(str(p) for p in labels)} of "
+        "at each column's own input profile (first row)\n"
+        f"columns: profiles at p{'/p'.join(str(p) for p in labels)} of "
         r"SP($k_{max}$)",
         fontsize=9,
     )

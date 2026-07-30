@@ -354,10 +354,12 @@ def test_ladder_picks_land_on_percentile_ranks_of_the_depth_order():
 
 def test_ladder_picks_dedupe_on_a_fold_smaller_than_the_ladder():
     # 3 curves, 5 requested percentiles: collisions drop, lowest percentile wins.
+    # At n = 3 the default ladder maps to ranks 0/1/1/1/2, so p50 and p70 lose
+    # rank 1 to p30 and the kept labels are p10/p30/p90.
     rows, labels, positions = T._ladder_picks(np.array([0.8, 0.6, 1.0]))
     assert len(rows) == len(labels) == len(positions) == 3
     assert list(positions) == [0, 1, 2]
-    assert labels == [5, 50, 75]
+    assert labels == [10, 30, 90]
     assert T._ladder_picks(np.empty(0))[0].size == 0
 
 
@@ -562,11 +564,51 @@ def test_latent_density_figure_is_gated_on_latent_dists_not_latents(tmp_path):
 def test_latent_traversal_figure_renders_across_latent_dims(tmp_path, monkeypatch):
     monkeypatch.setattr(T, "figure_dir", lambda subdir=None: tmp_path)
     td = _td()
-    for latent_dim in (1, 2, 4):  # 1, 2 and 4 columns; 3 profile rows each
+    for latent_dim in (1, 2, 4):  # 2, 3 and 5 rows; 5 profile columns each
         model = _DistFake(latent_dim=latent_dim)
         model.fit(td)
         out = T._write_latent_traversal_figure(model, td, f"trav_ld{latent_dim}")
         assert out is not None and Path(out).exists()
+
+
+def test_latent_traversal_grid_is_latents_by_profiles(tmp_path, monkeypatch):
+    """The grid is (n_dims + 1) rows x n_profiles columns, not the transpose.
+
+    Adding a latent adds a ROW, so the rendered figure must grow taller at
+    essentially fixed width -- the profile ladder alone sets the width. Asserted
+    on the rendered pixels rather than on the gridspec because ``bbox_inches=
+    "tight"`` is what finally sets the saved size.
+    """
+    monkeypatch.setattr(T, "figure_dir", lambda subdir=None: tmp_path)
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    td = _td()
+    sizes = {}
+    for latent_dim in (1, 2, 4):
+        model = _DistFake(latent_dim=latent_dim)
+        model.fit(td)
+        out = T._write_latent_traversal_figure(model, td, f"grid_ld{latent_dim}")
+        img = plt.imread(out)
+        sizes[latent_dim] = (img.shape[1], img.shape[0])  # (width, height) in px
+
+    heights = [sizes[d][1] for d in (1, 2, 4)]
+    widths = [sizes[d][0] for d in (1, 2, 4)]
+    assert heights == sorted(heights) and heights[0] < heights[-1]
+    # Width is set by the profile count alone, so it is the same figure width at
+    # every latent dim, up to what the tight bbox crops off the margins.
+    assert max(widths) - min(widths) <= 0.03 * max(widths)
+
+
+def test_latent_traversal_shares_the_residual_map_percentile_ladder():
+    """The two figures' panels sit at the same depths (maintainer decision).
+
+    Consistency of the *percentiles* only: the residual map picks from the
+    held-out fold and the traversal from the full dataset, so the same ladder
+    still selects different simulations in the two figures.
+    """
+    assert T._TRAVERSAL_PROFILE_PERCENTILES == T._LADDER_PERCENTILES
 
 
 def test_latent_traversal_skipped_for_single_k(tmp_path, monkeypatch):
